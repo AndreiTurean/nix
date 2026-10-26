@@ -77,6 +77,7 @@ public:
 
         if (_isCreator) {
             _sharedState = ::new (_mappedMemory.get()) SharedState;
+            _sharedState->subscriberCount = 0;
             _sharedState->header.initializationState.store(sharedMemoryInitializing, std::memory_order_relaxed);
             _sharedState->header.magic = sharedMemoryMagic;
             _sharedState->header.version = sharedMemoryVersion;
@@ -131,6 +132,45 @@ public:
         MutexLock lock(_sharedState->mutex, _sharedState->condition);
         while (_sharedState->ringBuffer.pop().has_value()) {
         }
+    }
+
+    void addSubscriber() {
+        MutexLock lock(_sharedState->mutex, _sharedState->condition);
+        if (_sharedState->subscriberCount == std::numeric_limits<std::uint64_t>::max()) {
+            throw std::overflow_error("shared-memory subscriber count overflow");
+        }
+        ++_sharedState->subscriberCount;
+    }
+
+    void removeSubscriber() noexcept {
+        try {
+            MutexLock lock(_sharedState->mutex, _sharedState->condition);
+            if (_sharedState->subscriberCount > 0) {
+                --_sharedState->subscriberCount;
+                if (_sharedState->subscriberCount == 0) {
+                    while (_sharedState->ringBuffer.pop().has_value()) {
+                    }
+                }
+            }
+        } catch (const std::exception&) {
+        }
+    }
+
+    bool pushIfSubscribed(const T& item) {
+        MutexLock lock(_sharedState->mutex, _sharedState->condition);
+        if (_sharedState->subscriberCount == 0) {
+            while (_sharedState->ringBuffer.pop().has_value()) {
+            }
+            return true;
+        }
+        const bool pushed = _sharedState->ringBuffer.push(item);
+        if (pushed) {
+            const int signalError = pthread_cond_signal(&_sharedState->condition);
+            if (signalError != 0) {
+                throw std::system_error(signalError, std::generic_category(), "pthread_cond_signal failed");
+            }
+        }
+        return pushed;
     }
 
     // Ring buffer API delegates
@@ -221,6 +261,7 @@ private:
     struct SharedState {
         SharedMemoryHeader header;
         SpscRingBuffer<T, Capacity> ringBuffer;
+        std::uint64_t subscriberCount;
         pthread_mutex_t mutex;
         pthread_cond_t condition;
     };

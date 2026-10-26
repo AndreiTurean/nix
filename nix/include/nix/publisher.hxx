@@ -2,7 +2,6 @@
 
 #include <nix/daemon.hxx>
 #include <nix/shm_channel.hxx>
-#include <algorithm>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -22,15 +21,7 @@ public:
     }
 
     bool publish(const T& message) {
-        const auto endpoints = _daemonClient->discover(_topicName);
-        const bool hasSubscribers = std::any_of(endpoints.begin(), endpoints.end(), [](const EndpointInfo& endpoint) {
-            return endpoint.role == EndpointRole::Subscriber;
-        });
-        if (!hasSubscribers) {
-            _channel.discardPending();
-            return true;
-        }
-        return _channel.push(message);
+        return _channel.pushIfSubscribed(message);
     }
 
     std::uint64_t capacity() const {

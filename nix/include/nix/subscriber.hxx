@@ -14,9 +14,12 @@ template <typename T, std::uint64_t Capacity>
 class Subscriber {
 public:
     Subscriber(std::shared_ptr<DaemonClient> daemonClient, std::string_view topicName)
-        : _daemonClient(std::move(daemonClient)), _topicName(topicName), _channel(topicName, ShmMode::Open) {}
+        : _daemonClient(std::move(daemonClient)), _topicName(topicName), _channel(topicName, ShmMode::Open) {
+        _channel.addSubscriber();
+    }
 
     ~Subscriber() {
+        _channel.removeSubscriber();
         _daemonClient->unregisterEndpoint(_topicName, typeid(T).name(), EndpointRole::Subscriber, Capacity);
     }
 
