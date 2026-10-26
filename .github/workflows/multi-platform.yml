@@ -1,4 +1,4 @@
-name: CMake Linux Clang CI
+name: CMake Linux Matrix CI
 
 on:
   push:
@@ -13,22 +13,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build_type: [Release]
+        include:
+          - name: GCC Release
+            cc: gcc
+            cxx: g++
+            preset: release
+          - name: Clang Release
+            cc: clang
+            cxx: clang++
+            preset: release
+          - name: GCC Debug
+            cc: gcc
+            cxx: g++
+            preset: default
+          - name: Clang Debug
+            cc: clang
+            cxx: clang++
+            preset: default
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Configure CMake
       env:
-        CC: clang
-        CXX: clang++
-      run: >
-        cmake --preset default
-        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        CC: ${{ matrix.cc }}
+        CXX: ${{ matrix.cxx }}
+      run: cmake --preset ${{ matrix.preset }}
 
     - name: Build
-      run: cmake --build --preset default --config ${{ matrix.build_type }}
+      run: cmake --build --preset ${{ matrix.preset }}
 
     - name: Test
-      working-directory: ${{ github.workspace }}/build
-      run: ctest --build-config ${{ matrix.build_type }}
+      working-directory: ${{ github.workspace }}/build/${{ matrix.preset }}
+      run: ctest --output-on-failure
