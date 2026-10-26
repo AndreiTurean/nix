@@ -2,10 +2,10 @@
 #include <cassert>
 #include <iostream>
 
-int main() {
+std::int32_t main() {
     // Capacity must be a power of 2 according to static_assert
     constexpr std::uint64_t testCapacity = 4;
-    nix::SpscRingBuffer<int, testCapacity> ringBuffer;
+    nix::SpscRingBuffer<std::int32_t, testCapacity> ringBuffer;
 
     // 1. Verify initial empty state
     assert(ringBuffer.empty() == true);

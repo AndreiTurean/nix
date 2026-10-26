@@ -5,10 +5,10 @@
 
 struct TestMessage {
     std::uint64_t sequenceId;
-    int payload;
+    std::int32_t payload;
 };
 
-int main() {
+std::int32_t main() {
     constexpr std::string_view topicName = "/nix_pub_sub_test_topic";
     constexpr std::uint64_t capacity = 16; // Must be a power of 2
 
@@ -29,8 +29,8 @@ int main() {
         assert(sub->size() == 0);
 
         // 4. Send a burst of messages and verify no drops occur under normal capacity
-        constexpr int totalMessages = 10;
-        for (int i = 0; i < totalMessages; ++i) {
+        constexpr std::int32_t totalMessages = 10;
+        for (std::int32_t i = 0; i < totalMessages; ++i) {
             TestMessage msg{static_cast<std::uint64_t>(i), i * 10};
             bool success = pub->publish(msg);
             assert(success == true);
@@ -41,7 +41,7 @@ int main() {
         assert(sub->empty() == false);
 
         // 5. Receive and validate FIFO ordering and zero data loss
-        for (int i = 0; i < totalMessages; ++i) {
+        for (std::int32_t i = 0; i < totalMessages; ++i) {
             auto received = sub->receive();
             assert(received.has_value());
             assert(received->sequenceId == static_cast<std::uint64_t>(i));

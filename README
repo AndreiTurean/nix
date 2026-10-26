@@ -1,0 +1,28 @@
+# Nix IPC Middleware
+
+A high-performance, lock-free Inter-Process Communication (IPC) library built in **C++20**, leveraging POSIX shared memory (`shm_open`, `mmap`) for ultra-low latency data exchange between nodes.
+
+## Architecture & Core Components
+
+- **`SpscRingBuffer`**: A fixed-size, lock-free Single-Producer Single-Consumer ring buffer using atomic operations with acquire-release semantics and cache-line alignment (`alignas(64)`) to eliminate false sharing.
+- **`ShmChannel`**: RAII wrapper managing POSIX shared memory segments, mapping regions safely via custom deleters and placement `new`.
+- **`Publisher` & `Subscriber`**: Strongly-typed endpoints bound to named topics.
+- **`Node`**: Central factory context managing endpoint creation and system handles.
+
+## Getting Started
+
+### Prerequisites
+- A modern C++20 compiler (GCC/Clang)
+- CMake (3.20+)
+- Linux (POSIX shared memory support)
+
+### Building & Running Tests
+```bash
+# Configure the project
+cmake --preset default
+
+# Build all targets and tests
+cmake --build --preset default
+
+# Run the test suite via CTest
+cd build/default && ctest --output-on-failure

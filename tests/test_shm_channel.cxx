@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string_view>
 
-int main() {
+std::int32_t main() {
     // Use a unique topic name for testing
     constexpr std::string_view testChannelName = "/nix_test_channel_ipc";
     constexpr std::uint64_t testCapacity = 8;
@@ -14,7 +14,7 @@ int main() {
 
     {
         // 1. Create the shared memory channel (acts as Producer/Server)
-        nix::ShmChannel<int, testCapacity> producerChannel(testChannelName, nix::ShmMode::Create);
+        nix::ShmChannel<std::int32_t, testCapacity> producerChannel(testChannelName, nix::ShmMode::Create);
 
         assert(producerChannel.empty() == true);
         assert(producerChannel.size() == 0);
@@ -27,7 +27,7 @@ int main() {
 
         {
             // 3. Open the SAME shared memory segment from another handle (acts as Consumer/Client)
-            nix::ShmChannel<int, testCapacity> consumerChannel(testChannelName, nix::ShmMode::Open);
+            nix::ShmChannel<std::int32_t, testCapacity> consumerChannel(testChannelName, nix::ShmMode::Open);
 
             assert(consumerChannel.empty() == false);
             assert(consumerChannel.size() == 2);
