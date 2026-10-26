@@ -1,7 +1,0 @@
-/home/turean/Work/nix/build/release/CMakeFiles/nix_core.dir
-/home/turean/Work/nix/build/release/CMakeFiles/edit_cache.dir
-/home/turean/Work/nix/build/release/CMakeFiles/rebuild_cache.dir
-/home/turean/Work/nix/build/release/CMakeFiles/list_install_components.dir
-/home/turean/Work/nix/build/release/CMakeFiles/install.dir
-/home/turean/Work/nix/build/release/CMakeFiles/install/local.dir
-/home/turean/Work/nix/build/release/CMakeFiles/install/strip.dir

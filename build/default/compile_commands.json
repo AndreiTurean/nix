@@ -1,8 +1,0 @@
-[
-{
-  "directory": "/home/turean/Work/nix/build/default",
-  "command": "/usr/bin/c++ -I/home/turean/Work/nix/include -g -std=c++20 -o CMakeFiles/nix_core.dir/source/core.cxx.o -c /home/turean/Work/nix/source/core.cxx",
-  "file": "/home/turean/Work/nix/source/core.cxx",
-  "output": "/home/turean/Work/nix/build/default/CMakeFiles/nix_core.dir/source/core.cxx.o"
-}
-]

@@ -1,5 +1,0 @@
-# ninja log v7
-1	304	1793020595862802865	CMakeFiles/nix_core.dir/source/core.cxx.o	7bccefa8a8cb1396
-305	355	1793020596166795285	nix/lib/libnix_core.a	a7d7dbba85e3ff97
-1	44	1793020747560558821	build.ninja	3f56a49575de347e
-1	44	1793020747560558821	/home/turean/Work/nix/build/default/cmake_install.cmake	3f56a49575de347e
