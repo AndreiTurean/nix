@@ -15,24 +15,24 @@ set(NIX_WARNINGS
     -Wall
     -Wextra
     -Wpedantic
-    -Werror                  # Treat ALL warnings as errors
-    -Wshadow                 # Warn when a variable shadows another local/global
-    -Wnon-virtual-dtor       # Warn if a class with virtual functions has a non-virtual destructor
-    -Wold-style-cast         # Warn on C-style casts (e.g. (int)x); forces static_cast/reinterpret_cast
-    -Wcast-align             # Warn for pointer casts that increase alignment requirements
-    -Wunused                 # Warn on anything unused (variables, functions, parameters)
-    -Woverloaded-virtual     # Warn if you overload (not override) virtual functions
-    -Wconversion             # Warn on implicit conversions that may alter values (e.g. int to char)
-    -Wsign-conversion        # Warn on implicit conversions between signed and unsigned types
-    -Wmisleading-indentation # Warn if indentation implies blocks where blocks do not exist
-    -Wnull-dereference       # Warn if a null dereference is detected
-    -Wuseless-cast           # Warn if you cast a type to itself
+    -Werror                    # Treat ALL warnings as errors
+    -Wshadow                   # Warn when a variable shadows another local/global
+    -Wnon-virtual-dtor         # Warn if a class with virtual functions has a non-virtual destructor
+    -Wold-style-cast           # Warn on C-style casts (e.g. (int)x); forces static_cast/reinterpret_cast
+    -Wcast-align               # Warn for pointer casts that increase alignment requirements
+    -Wunused                   # Warn on anything unused (variables, functions, parameters)
+    -Woverloaded-virtual       # Warn if you overload (not override) virtual functions
+    -Wconversion               # Warn on implicit conversions that may alter values (e.g. int to char)
+    -Wsign-conversion          # Warn on implicit conversions between signed and unsigned types
+    -Wmisleading-indentation   # Warn if indentation implies blocks where blocks do not exist
+    -Wnull-dereference         # Warn if a null dereference is detected
 )
 
-# GCC-specific extra strictness
+# GCC and/or strict extra warnings
 set(NIX_GCC_EXTRA_WARNINGS
-    -Wlogical-op             # Warn about suspicious uses of logical operators
-    -Wduplicated-cond        # Warn about duplicated conditions in if-else chains
+    -Wuseless-cast             # GCC only: Warn if you cast a type to itself
+    -Wlogical-op               # Warn about suspicious uses of logical operators
+    -Wduplicated-cond          # Warn about duplicated conditions in if-else chains
     -Wduplicated-branches      # Warn if multiple branches of an if/else have the same code
 )
 
