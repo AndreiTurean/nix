@@ -73,16 +73,20 @@ class PythonIpcInteropTest(unittest.TestCase):
             os.environ["NIX_DAEMON_SOCKET"] = cls.previous_socket_path
         shutil.rmtree(cls.temp_dir, ignore_errors=True)
 
-    def wait_for_endpoint(self, node, topic, role):
+    def wait_for_endpoint(self, node, topic, role, peer=None):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if any(endpoint["role"] == role for endpoint in node.discover(topic)):
                 return
+            if peer is not None and peer.poll() is not None:
+                stdout, stderr = peer.communicate()
+                self.fail(f"C++ peer exited before registering {role}; stdout={stdout!r}, stderr={stderr!r}")
             time.sleep(0.01)
         self.fail(f"timed out waiting for {role} on {topic}")
 
-    def start_peer(self, mode):
-        topic = f"/nix_python_interop_{uuid.uuid4().hex}"
+    def start_peer(self, mode, topic=None):
+        if topic is None:
+            topic = f"/nix_python_interop_{uuid.uuid4().hex}"
         self.topic = topic
         return subprocess.Popen(
             [os.environ["NIX_TEST_CPP_PEER"], mode, topic],
@@ -102,11 +106,13 @@ class PythonIpcInteropTest(unittest.TestCase):
         self.assertEqual(peer.returncode, 0, f"stdout={stdout!r}, stderr={stderr!r}")
 
     def test_python_publishes_to_cpp_subscriber(self):
-        peer = self.start_peer("cpp-subscribe")
+        node = Node("python_interop_publisher")
+        topic = f"/nix_python_interop_{uuid.uuid4().hex}"
+        self.topic = topic
+        publisher = node.create_publisher(topic, SCHEMA, ENCODING)
+        peer = self.start_peer("cpp-subscribe", topic)
         try:
-            node = Node("python_interop_publisher")
-            publisher = node.create_publisher(self.topic, SCHEMA, ENCODING)
-            self.wait_for_endpoint(node, self.topic, "subscriber")
+            self.wait_for_endpoint(node, self.topic, "subscriber", peer)
             for value in PYTHON_VALUES:
                 self.assertTrue(publisher.publish(struct.pack("<i", value)))
             self.assert_peer_succeeded(peer)
