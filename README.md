@@ -54,7 +54,9 @@ Both examples use the `/nix_example_counter` topic and carry `std::int32_t` valu
 
 ### Python Nodes
 
-Install the Python extension from the repository with `python3 -m pip install .`. Its CPython binding is implemented in `nix/src/python_interop.cxx`; Python creates `Node`, `Publisher`, and `Subscriber` instances directly. The binding transports a common envelope while Python owns serialization and decoding. Each message carries a schema label, encoding label, and opaque payload bytes. The envelope allows up to 64 schema bytes, 32 encoding bytes, and 512 payload bytes, with a channel capacity of 16.
+Install the Python extension from the repository with `python3 -m pip install .`. Its CPython binding is implemented in `nix/src/python_interop.cxx`; Python creates `Node`, `Publisher`, and `Subscriber` instances directly. The binding transports a common envelope while Python owns serialization and decoding. Each message carries a schema label, encoding label, and opaque payload bytes. The envelope allows up to 64 schema bytes, 32 encoding bytes, and 63 KiB payload bytes, with a channel capacity of 16.
+
+The Python extension is supported on Linux with CPython 3.10 through 3.14. The package builds a native C++20 extension, so a compatible C++20 compiler and Python development headers are required when installing from source. CI installs the package with the command above and runs import, endpoint, serialization, and bidirectional C++/Python IPC tests across these Python versions.
 
 ```bash
 python3 examples/python_counter_publisher.py

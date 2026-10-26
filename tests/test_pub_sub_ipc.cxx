@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -87,7 +88,7 @@ int main(int argc, char** argv) {
     constexpr std::uint64_t capacity = 16; // Must be a power of 2
 
     // Ensure a clean slate
-    shm_unlink(topicName.data());
+    shm_unlink(std::string(topicName).c_str());
 
     {
         // 1. Initialize our central nodes
@@ -172,7 +173,7 @@ int main(int argc, char** argv) {
         nix::Node subscriberNode("disconnected_consumer");
         constexpr std::string_view disconnectedTopic = "/nix_pub_sub_disconnected_topic";
         constexpr std::uint64_t disconnectedCapacity = 2;
-        shm_unlink(disconnectedTopic.data());
+        shm_unlink(std::string(disconnectedTopic).c_str());
         auto publisher = producerNode.createPublisher<TestMessage, disconnectedCapacity>(disconnectedTopic);
         auto subscriber = subscriberNode.createSubscriber<TestMessage, disconnectedCapacity>(disconnectedTopic);
 
@@ -182,6 +183,6 @@ int main(int argc, char** argv) {
         assert(received.has_value() && received->sequenceId == 1);
     }
 
-    std::cout << "Publisher-Subscriber zero-loss IPC test passed successfully!" << std::endl;
+    std::cout << "Publisher-Subscriber zero-loss IPC test passed successfully!" << '\n';
     return 0;
 }

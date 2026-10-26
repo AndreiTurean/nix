@@ -48,6 +48,6 @@ std::int32_t main() {
     assert(ringBuffer.size() == 0);
     assert(ringBuffer.pop().has_value() == false);
 
-    std::cout << "SpscRingBuffer test passed successfully!" << std::endl;
+    std::cout << "SpscRingBuffer test passed successfully!" << '\n';
     return 0;
 }
