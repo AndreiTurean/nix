@@ -50,6 +50,7 @@ add_library(nix_core
     nix/src/nix.cxx
     nix/src/daemon_client.cxx
 )
+set_target_properties(nix_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(nix::core ALIAS nix_core)
 
 target_include_directories(nix_core
@@ -60,6 +61,11 @@ target_include_directories(nix_core
 target_link_libraries(nix_core PUBLIC Threads::Threads)
 
 apply_nix_warnings(nix_core)
+
+add_library(nix_python SHARED nix/src/python_bridge.cxx)
+target_link_libraries(nix_python PRIVATE nix::core)
+set_target_properties(nix_python PROPERTIES OUTPUT_NAME nix_python)
+apply_nix_warnings(nix_python)
 
 add_executable(nix-daemon nix-daemon/src/daemon.cxx)
 target_link_libraries(nix-daemon PRIVATE nix::core Threads::Threads)
@@ -76,6 +82,14 @@ apply_nix_warnings(counter_publisher)
 add_executable(counter_subscriber examples/counter_subscriber.cxx)
 target_link_libraries(counter_subscriber PRIVATE nix::core)
 apply_nix_warnings(counter_subscriber)
+
+add_executable(nix-list examples/nix_list.cxx)
+target_link_libraries(nix-list PRIVATE nix::core)
+apply_nix_warnings(nix-list)
+
+add_executable(versioned_message_example examples/versioned_message.cxx)
+target_link_libraries(versioned_message_example PRIVATE nix::core)
+apply_nix_warnings(versioned_message_example)
 
 # Enable testing framework
 enable_testing()
@@ -107,7 +121,7 @@ endif()
 ### Install step
 include(GNUInstallDirs)
 
-install(TARGETS nix_core nix-daemon nix-cleanup-shm counter_publisher counter_subscriber
+install(TARGETS nix_core nix_python nix-daemon nix-cleanup-shm counter_publisher counter_subscriber nix-list versioned_message_example
     EXPORT nixTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

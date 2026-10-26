@@ -19,6 +19,8 @@ Stale shared-memory channels can be inspected with `build/default/nix/bin/nix-cl
 
 Each channel also records a message type fingerprint based on its compiler type signature, size, and alignment. Opening a channel with a different type or incompatible size/alignment is rejected. C++ cannot reflect over aggregate fields to detect every same-size schema edit, so applications that evolve message layouts should specialize `nix::SharedTypeFingerprint<T>` with an explicit schema/version value and change it whenever the wire layout changes. Payloads must be trivially copyable.
 
+The `examples/versioned_message.cxx` example demonstrates a custom message and a `nix::SharedTypeFingerprint<T>` specialization. Increment the explicit fingerprint whenever fields are added, removed, reordered, or change meaning or representation; producers and subscribers must use the same schema version.
+
 ### Prerequisites
 - A modern C++20 compiler (GCC/Clang)
 - CMake (3.20+)
@@ -47,3 +49,29 @@ Start the manager, then run the publisher and subscriber in separate terminals. 
 ```
 
 Both examples use the `/nix_example_counter` topic and carry `std::int32_t` values. Stop each process with Ctrl+C.
+
+### Python Nodes
+
+The `nix_python` shared library exposes `std::int32_t` publisher/subscriber endpoints through a small C ABI, and `examples/nix_python.py` wraps it with Python's standard-library `ctypes`. Its channel capacity is 16, matching the C++ counter examples. Build the project, start `nix-daemon`, then run either Python example:
+
+```bash
+python3 examples/python_counter_publisher.py
+python3 examples/python_counter_subscriber.py
+```
+
+The Python and C++ counter nodes use the same `/nix_example_counter` topic and can interoperate in either direction. The native library is loaded from `build/default/nix/lib/libnix_python.so` by default; set `NIX_PYTHON_LIBRARY` to override its path. The current bridge supports `int32` messages; structured Python/C++ messages need an explicitly defined shared wire schema and matching fingerprint.
+
+### Inspect Active Topics
+
+With `nix-daemon` running, `nix-list` displays active topics, endpoint counts, node names, and registered type identifiers. Pass a topic name to filter the output.
+
+```bash
+./build/default/nix/bin/nix-list
+./build/default/nix/bin/nix-list /nix_example_counter
+```
+
+The compiled schema-fingerprint example can be run with:
+
+```bash
+./build/default/nix/bin/versioned_message_example
+```
