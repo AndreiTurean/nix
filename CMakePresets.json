@@ -25,6 +25,15 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "lint",
+      "displayName": "Debug with clang-tidy",
+      "description": "Debug build that runs clang-tidy on compiled C++ sources",
+      "inherits": "default",
+      "cacheVariables": {
+        "CMAKE_CXX_CLANG_TIDY": "clang-tidy;--checks=clang-analyzer-*,bugprone-*,performance-*,portability-*,-bugprone-empty-catch,-bugprone-exception-escape,-bugprone-signed-bitwise,-clang-analyzer-optin.performance.Padding,-clang-analyzer-optin.taint.GenericTaint,-clang-analyzer-unix.BlockInCriticalSection,-performance-enum-size,-performance-inefficient-string-concatenation,-portability-avoid-pragma-once;--warnings-as-errors=*;--extra-arg=-Wno-unknown-warning-option"
+      }
     }
   ],
   "buildPresets": [
@@ -35,6 +44,10 @@
     {
       "name": "release",
       "configurePreset": "release"
+    },
+    {
+      "name": "lint",
+      "configurePreset": "lint"
     }
   ]
 }

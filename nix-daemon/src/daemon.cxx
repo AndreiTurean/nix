@@ -34,7 +34,7 @@ int listeningSocket = -1;
 
 void logEvent(const std::string& message) {
     std::lock_guard<std::mutex> lock(logMutex);
-    std::cout << "nix-daemon: " << message << std::endl;
+    std::cout << "nix-daemon: " << message << '\n';
 }
 
 void handleSignal(int) {
@@ -48,7 +48,7 @@ void handleSignal(int) {
 std::string encode(std::string_view value) {
     constexpr char hexDigits[] = "0123456789abcdef";
     std::string result;
-    result.reserve(value.size() * 2U);
+    result.reserve(value.size() * std::size_t{2U});
     for (const char rawCharacter : value) {
         const auto character = static_cast<unsigned char>(rawCharacter);
         result.push_back(hexDigits[character >> 4U]);
@@ -76,7 +76,8 @@ std::string decode(std::string_view value) {
         if (high < 0 || low < 0) {
             throw std::runtime_error("invalid hex field");
         }
-        result.push_back(static_cast<char>((high << 4) | low));
+        result.push_back(static_cast<char>((static_cast<unsigned int>(high) << 4U)
+            | static_cast<unsigned int>(low)));
     }
     return result;
 }
@@ -97,7 +98,7 @@ std::vector<std::string_view> split(std::string_view line) {
 
 std::string readLine(int socket) {
     std::string line;
-    while (line.size() < 1024U * 1024U) {
+    while (line.size() < std::size_t{1024U} * 1024U) {
         char character = 0;
         const ssize_t result = recv(socket, &character, sizeof(character), 0);
         if (result < 0) {

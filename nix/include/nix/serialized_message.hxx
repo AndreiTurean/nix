@@ -15,7 +15,7 @@ namespace nix {
 inline constexpr std::uint16_t serializedMessageVersion = 1U;
 inline constexpr std::size_t serializedSchemaCapacity = 64U;
 inline constexpr std::size_t serializedEncodingCapacity = 32U;
-inline constexpr std::size_t serializedPayloadCapacity = 63U * 1024U;
+inline constexpr std::size_t serializedPayloadCapacity = std::size_t{63U} * 1024U;
 inline constexpr std::size_t serializedMessageHeaderSize = 16U;
 inline constexpr std::size_t serializedMessageCapacity = serializedMessageHeaderSize
     + serializedSchemaCapacity + serializedEncodingCapacity + serializedPayloadCapacity;
@@ -53,8 +53,9 @@ inline void writeBigEndian32(std::array<std::uint8_t, serializedMessageCapacity>
 
 inline std::uint16_t readBigEndian16(const std::array<std::uint8_t, serializedMessageCapacity>& bytes,
     std::size_t offset) {
-    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[offset]) << 8U)
-        | static_cast<std::uint16_t>(bytes[offset + 1U]));
+    const std::uint32_t high = bytes[offset];
+    const std::uint32_t low = bytes[offset + 1U];
+    return static_cast<std::uint16_t>((high << 8U) | low);
 }
 
 inline std::uint32_t readBigEndian32(const std::array<std::uint8_t, serializedMessageCapacity>& bytes,

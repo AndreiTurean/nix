@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
             const auto message = nix::makeSerializedMessage(
                 "nix.counter.int32/v1", "application/x-nix-int32-le", payload.data(), payload.size());
             if (publisher->publish(message)) {
-                std::cout << "published: " << counter << std::endl;
+                std::cout << "published: " << counter << '\n';
                 counter = counter == std::numeric_limits<std::int32_t>::max() ? 0 : counter + 1;
                 ++publishedCount;
                 if (messageLimit >= 0 && publishedCount >= messageLimit) {

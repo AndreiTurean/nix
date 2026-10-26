@@ -2,6 +2,7 @@
 #include <cassert>
 #include <iostream>
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <sys/wait.h>
 #include <time.h>
@@ -15,7 +16,7 @@ std::int32_t main() {
     constexpr std::uint64_t testCapacity = 8;
 
     // Ensure a clean slate in case a previous run crashed
-    shm_unlink(testChannelName.data());
+    shm_unlink(std::string(testChannelName).c_str());
 
     {
         // 1. Create the shared memory channel (acts as Producer/Server)
@@ -97,7 +98,7 @@ std::int32_t main() {
     constexpr std::int32_t messagesPerProducer = 1000;
     constexpr std::int32_t totalMessages = producerCount * messagesPerProducer;
     constexpr std::uint64_t concurrentCapacity = 64;
-    shm_unlink(concurrentChannelName.data());
+    shm_unlink(std::string(concurrentChannelName).c_str());
     {
         nix::ShmChannel<std::int32_t, concurrentCapacity> channel(concurrentChannelName, nix::ShmMode::Create);
         std::array<std::atomic<std::int32_t>, totalMessages> seen{};
@@ -145,6 +146,6 @@ std::int32_t main() {
         assert(channel.empty());
     }
 
-    std::cout << "ShmChannel IPC test passed successfully!" << std::endl;
+    std::cout << "ShmChannel IPC test passed successfully!" << '\n';
     return 0;
 }

@@ -7,6 +7,26 @@ on:
     branches: [ "master" ]
 
 jobs:
+  clang-tidy:
+    name: Clang-Tidy
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install lint tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes clang clang-tidy ninja-build
+
+    - name: Configure lint build
+      env:
+        CC: clang
+        CXX: clang++
+      run: cmake --preset lint
+
+    - name: Run clang-tidy and build
+      run: cmake --build --preset lint
+
   python-interop:
     runs-on: ubuntu-latest
     strategy:

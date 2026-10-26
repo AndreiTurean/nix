@@ -12,12 +12,12 @@
 namespace nix {
 namespace {
 
-constexpr std::size_t maxLineLength = 1024U * 1024U;
+constexpr std::size_t maxLineLength = std::size_t{1024U} * 1024U;
 constexpr char hexDigits[] = "0123456789abcdef";
 
 std::string encode(std::string_view value) {
     std::string result;
-    result.reserve(value.size() * 2U);
+    result.reserve(value.size() * std::size_t{2U});
     for (const char rawCharacter : value) {
         const auto character = static_cast<unsigned char>(rawCharacter);
         result.push_back(hexDigits[character >> 4U]);
@@ -51,7 +51,8 @@ std::string decode(std::string_view value) {
         if (high < 0 || low < 0) {
             throw std::runtime_error("invalid hex field from nix-daemon");
         }
-        result.push_back(static_cast<char>((high << 4) | low));
+        result.push_back(static_cast<char>((static_cast<unsigned int>(high) << 4U)
+            | static_cast<unsigned int>(low)));
     }
     return result;
 }

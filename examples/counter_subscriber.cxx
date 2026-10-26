@@ -27,14 +27,14 @@ int main(int argc, char** argv) {
             }
         }
         if (!publisherAvailable) {
-            std::cout << "waiting for counter publisher..." << std::endl;
+            std::cout << "waiting for counter publisher..." << '\n';
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             continue;
         }
 
         try {
             auto subscriber = node.createSubscriber<nix::SerializedMessage, capacity>(topicName);
-            std::cout << "listening on " << topicName << std::endl;
+            std::cout << "listening on " << topicName << '\n';
             std::int32_t receivedCount = 0;
             for (;;) {
                 const auto message = subscriber->receiveBlocking();
@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
                         | (static_cast<std::uint32_t>(frame.payload[1]) << 8U)
                         | (static_cast<std::uint32_t>(frame.payload[2]) << 16U)
                         | (static_cast<std::uint32_t>(frame.payload[3]) << 24U);
-                    std::cout << "received: " << std::bit_cast<std::int32_t>(bits) << std::endl;
+                    std::cout << "received: " << std::bit_cast<std::int32_t>(bits) << '\n';
                     ++receivedCount;
                     if (messageLimit >= 0 && receivedCount >= messageLimit) {
                         return 0;
@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
                 }
             }
         } catch (const std::system_error& error) {
-            std::cerr << "publisher disappeared while connecting: " << error.what() << std::endl;
+            std::cerr << "publisher disappeared while connecting: " << error.what() << '\n';
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
     }
