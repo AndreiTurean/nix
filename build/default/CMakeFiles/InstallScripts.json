@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/turean/Work/nix/build/default/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
