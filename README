@@ -19,6 +19,8 @@ Stale shared-memory channels can be inspected with `build/default/nix/bin/nix-cl
 
 Each channel also records a message type fingerprint based on its compiler type signature, size, and alignment. Opening a channel with a different type or incompatible size/alignment is rejected. C++ cannot reflect over aggregate fields to detect every same-size schema edit, so applications that evolve message layouts should specialize `nix::SharedTypeFingerprint<T>` with an explicit schema/version value and change it whenever the wire layout changes. Payloads must be trivially copyable.
 
+Publishers check the daemon's live endpoint registry before writing. If no subscriber is registered, the publish call succeeds but discards the message and any queued backlog instead of retaining stale data for a future subscriber. While subscribers are registered, normal bounded-queue backpressure applies; publishers can retry when the ring is full. Endpoint destruction unregisters it immediately, and daemon disconnect cleanup handles crashed nodes.
+
 The `examples/versioned_message.cxx` example demonstrates a custom message and a `nix::SharedTypeFingerprint<T>` specialization. Increment the explicit fingerprint whenever fields are added, removed, reordered, or change meaning or representation; producers and subscribers must use the same schema version.
 
 ### Prerequisites
@@ -52,14 +54,14 @@ Both examples use the `/nix_example_counter` topic and carry `std::int32_t` valu
 
 ### Python Nodes
 
-The `nix_python` shared library exposes `std::int32_t` publisher/subscriber endpoints through a small C ABI, and `examples/nix_python.py` wraps it with Python's standard-library `ctypes`. Its channel capacity is 16, matching the C++ counter examples. Build the project, start `nix-daemon`, then run either Python example:
+Install the Python extension from the repository with `python3 -m pip install .`. Its CPython binding is implemented in `nix/src/python_interop.cxx`; Python creates `Node`, `Publisher`, and `Subscriber` instances directly. The binding transports a common envelope while Python owns serialization and decoding. Each message carries a schema label, encoding label, and opaque payload bytes. The envelope allows up to 64 schema bytes, 32 encoding bytes, and 512 payload bytes, with a channel capacity of 16.
 
 ```bash
 python3 examples/python_counter_publisher.py
 python3 examples/python_counter_subscriber.py
 ```
 
-The Python and C++ counter nodes use the same `/nix_example_counter` topic and can interoperate in either direction. The native library is loaded from `build/default/nix/lib/libnix_python.so` by default; set `NIX_PYTHON_LIBRARY` to override its path. The current bridge supports `int32` messages; structured Python/C++ messages need an explicitly defined shared wire schema and matching fingerprint.
+The Python and C++ counter nodes use the same `/nix_example_counter` topic and canonical `int32` wire format (`nix.counter.int32/v1`, `application/x-nix-int32-le`), so they can interoperate in either direction. Python serializes with `struct.pack("<i", value)` and decodes with `struct.unpack("<i", payload)`; other message schemas may use JSON, MessagePack, Protocol Buffers, or another agreed encoding by supplying matching schema and encoding labels.
 
 ### Inspect Active Topics
 

@@ -6,3 +6,4 @@
 #include <nix/subscriber.hxx>
 #include <nix/node.hxx>
 #include <nix/daemon.hxx>
+#include <nix/serialized_message.hxx>

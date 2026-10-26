@@ -1,0 +1,12 @@
+README
+pyproject.toml
+setup.py
+nix/src/daemon_client.cxx
+nix/src/nix.cxx
+nix/src/python_interop.cxx
+python/nix_ipc.egg-info/PKG-INFO
+python/nix_ipc.egg-info/SOURCES.txt
+python/nix_ipc.egg-info/dependency_links.txt
+python/nix_ipc.egg-info/not-zip-safe
+python/nix_ipc.egg-info/top_level.txt
+python/nixipc/__init__.py

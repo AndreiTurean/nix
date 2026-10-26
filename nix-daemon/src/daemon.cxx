@@ -187,6 +187,45 @@ void handleClient(int clientSocket) {
                     + " topic=" + registered.topicName + " type=" + registered.typeName
                     + " capacity=" + std::to_string(registered.capacity));
                 sendLine(clientSocket, "OK");
+            } else if (fields.size() == 5U && fields[0] == "UNREGISTER") {
+                std::uint64_t capacity = 0;
+                const bool isPublisher = fields[1] == "P";
+                const bool isSubscriber = fields[1] == "S";
+                if ((!isPublisher && !isSubscriber) || !parseCapacity(fields[2], capacity)) {
+                    sendLine(clientSocket, "ERROR\tinvalid unregistration");
+                    continue;
+                }
+                const Registration endpoint{nodeName, decode(fields[3]), decode(fields[4]),
+                    isPublisher ? nix::EndpointRole::Publisher : nix::EndpointRole::Subscriber, capacity};
+                const auto sessionEntry = std::find_if(sessionRegistrations.begin(), sessionRegistrations.end(),
+                    [&](const Registration& current) {
+                        return current.topicName == endpoint.topicName
+                            && current.typeName == endpoint.typeName
+                            && current.role == endpoint.role
+                            && current.capacity == endpoint.capacity;
+                    });
+                if (sessionEntry == sessionRegistrations.end()) {
+                    sendLine(clientSocket, "ERROR\tendpoint is not registered");
+                    continue;
+                }
+                {
+                    std::lock_guard<std::mutex> lock(registryMutex);
+                    const auto registryEntry = std::find_if(registry.begin(), registry.end(),
+                        [&](const Registration& current) {
+                            return current.nodeName == endpoint.nodeName
+                                && current.topicName == endpoint.topicName
+                                && current.typeName == endpoint.typeName
+                                && current.role == endpoint.role
+                                && current.capacity == endpoint.capacity;
+                        });
+                    if (registryEntry != registry.end()) {
+                        registry.erase(registryEntry);
+                    }
+                }
+                sessionRegistrations.erase(sessionEntry);
+                const std::string roleName = endpoint.role == nix::EndpointRole::Publisher ? "publisher" : "subscriber";
+                logEvent("unregistered " + roleName + " node=" + nodeName + " topic=" + endpoint.topicName);
+                sendLine(clientSocket, "OK");
             } else if (fields.size() == 2U && fields[0] == "DISCOVER") {
                 const std::string topicFilter = fields[1] == "-" ? std::string{} : decode(fields[1]);
                 std::vector<Registration> matches;

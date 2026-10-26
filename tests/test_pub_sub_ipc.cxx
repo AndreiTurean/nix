@@ -84,6 +84,10 @@ int main(int argc, char** argv) {
 
         // 2. Create publisher and subscriber endpoints via node factories
         auto pub = producerNode.createPublisher<TestMessage, capacity>(topicName);
+
+        // Messages published before any subscriber exists are intentionally discarded.
+        assert(pub->publish(TestMessage{999, -1}) == true);
+
         auto sub = subscriberNode.createSubscriber<TestMessage, capacity>(topicName);
 
         const auto discovered = producerNode.discover(topicName);
@@ -97,6 +101,7 @@ int main(int argc, char** argv) {
         // 3. Verify initial states
         assert(sub->empty() == true);
         assert(sub->size() == 0);
+        assert(sub->receive().has_value() == false);
 
         // 4. Send a burst of messages and verify no drops occur under normal capacity
         constexpr std::int32_t totalMessages = 10;
@@ -121,6 +126,12 @@ int main(int argc, char** argv) {
         // 6. Verify channel is empty again after consumption
         assert(sub->empty() == true);
         assert(sub->size() == 0);
+
+        sub.reset();
+        assert(pub->publish(TestMessage{777, 777}) == true);
+        sub = subscriberNode.createSubscriber<TestMessage, capacity>(topicName);
+        assert(sub->empty() == true);
+        assert(sub->receive().has_value() == false);
 
         // 7. Test backpressure/overflow protection: fill up the buffer completely
         for (std::uint64_t i = 0; i < capacity; ++i) {

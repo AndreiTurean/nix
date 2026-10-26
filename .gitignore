@@ -4,6 +4,9 @@ install/
 bin/
 lib/
 
+# Python cache
+**/__pycache__/**
+
 # IDE files
 .vscode/
 .idea/

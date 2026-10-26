@@ -1,13 +1,20 @@
 #include <nix/nix.hxx>
+#include <nix/serialized_message.hxx>
 
+#include <array>
+#include <bit>
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <string>
+#include <string_view>
 #include <thread>
 
-int main() {
-    constexpr char topicName[] = "/nix_example_counter";
+int main(int argc, char** argv) {
+    constexpr std::string_view defaultTopicName = "/nix_example_counter";
     constexpr std::uint64_t capacity = 16;
+    const std::string_view topicName = argc > 1 ? argv[1] : defaultTopicName;
+    const std::int32_t messageLimit = argc > 2 ? std::stoi(argv[2]) : -1;
     nix::Node node("counter_subscriber");
 
     for (;;) {
@@ -15,7 +22,7 @@ int main() {
         bool publisherAvailable = false;
         for (const auto& endpoint : endpoints) {
             if (endpoint.role == nix::EndpointRole::Publisher
-                && endpoint.typeName == typeid(std::int32_t).name()) {
+                && endpoint.typeName == typeid(nix::SerializedMessage).name()) {
                 publisherAvailable = true;
                 break;
             }
@@ -27,12 +34,31 @@ int main() {
         }
 
         try {
-            auto subscriber = node.createSubscriber<std::int32_t, capacity>(topicName);
+            auto subscriber = node.createSubscriber<nix::SerializedMessage, capacity>(topicName);
             std::cout << "listening on " << topicName << std::endl;
+            std::int32_t receivedCount = 0;
             for (;;) {
-                const auto value = subscriber->receiveBlocking();
-                if (value.has_value()) {
-                    std::cout << "received: " << *value << std::endl;
+                const auto message = subscriber->receiveBlocking();
+                if (message.has_value()) {
+                    const auto& frame = *message;
+                    if (frame.version != nix::serializedMessageVersion
+                        || frame.schemaLength != std::string_view("nix.counter.int32/v1").size()
+                        || frame.encodingLength != std::string_view("application/x-nix-int32-le").size()
+                        || frame.payloadLength != 4U
+                        || std::string_view(frame.schema.data(), frame.schemaLength) != "nix.counter.int32/v1"
+                        || std::string_view(frame.encoding.data(), frame.encodingLength) != "application/x-nix-int32-le") {
+                        std::cerr << "unsupported serialized counter frame\n";
+                        return 1;
+                    }
+                    const std::uint32_t bits = static_cast<std::uint32_t>(frame.payload[0])
+                        | (static_cast<std::uint32_t>(frame.payload[1]) << 8U)
+                        | (static_cast<std::uint32_t>(frame.payload[2]) << 16U)
+                        | (static_cast<std::uint32_t>(frame.payload[3]) << 24U);
+                    std::cout << "received: " << std::bit_cast<std::int32_t>(bits) << std::endl;
+                    ++receivedCount;
+                    if (messageLimit >= 0 && receivedCount >= messageLimit) {
+                        return 0;
+                    }
                 }
             }
         } catch (const std::system_error& error) {

@@ -189,6 +189,18 @@ void DaemonClient::registerEndpoint(std::string_view topicName, std::string_view
     }
 }
 
+void DaemonClient::unregisterEndpoint(std::string_view topicName, std::string_view typeName,
+    EndpointRole role, std::uint64_t capacity) noexcept {
+    try {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const char* roleName = role == EndpointRole::Publisher ? "P" : "S";
+        sendLine(_socket, "UNREGISTER\t" + std::string(roleName) + "\t" + std::to_string(capacity)
+            + "\t" + encode(topicName) + "\t" + encode(typeName));
+        static_cast<void>(readLine(_socket));
+    } catch (const std::exception&) {
+    }
+}
+
 std::vector<EndpointInfo> DaemonClient::discover(std::string_view topicName) {
     std::lock_guard<std::mutex> lock(_mutex);
     sendLine(_socket, "DISCOVER\t" + (topicName.empty() ? std::string("-") : encode(topicName)));

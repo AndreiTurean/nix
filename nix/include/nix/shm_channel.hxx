@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <ctime>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -112,7 +113,6 @@ public:
     }
 
     ~ShmChannel() {
-        // Smart pointers and RAII handle munmap, close, and shm_unlink automatically
         if (_isCreator && !_name.empty()) {
             std::string shmPath = (_name[0] == '/') ? std::string(_name) : "/" + std::string(_name);
             shm_unlink(shmPath.c_str());
@@ -122,13 +122,18 @@ public:
         }
     }
 
-    // Rule of Zero/Five: explicitly delete copy, default move since unique_ptr handles resource tracking
     ShmChannel(const ShmChannel&) = delete;
     ShmChannel& operator=(const ShmChannel&) = delete;
     ShmChannel(ShmChannel&&) noexcept = default;
     ShmChannel& operator=(ShmChannel&&) noexcept = default;
 
-    // Serialize the SPSC ring's operations to provide a shared MPMC queue.
+    void discardPending() {
+        MutexLock lock(_sharedState->mutex, _sharedState->condition);
+        while (_sharedState->ringBuffer.pop().has_value()) {
+        }
+    }
+
+    // Ring buffer API delegates
     bool push(const T& item) {
         MutexLock lock(_sharedState->mutex, _sharedState->condition);
         const bool pushed = _sharedState->ringBuffer.push(item);
