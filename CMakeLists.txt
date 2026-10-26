@@ -115,6 +115,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   apply_nix_warnings(test_pub_sub_ipc)
   target_link_libraries(test_pub_sub_ipc PRIVATE nix::core)
     add_test(NAME PublisherSubcriberIpcTest COMMAND test_pub_sub_ipc $<TARGET_FILE:nix-daemon>)
+
+    add_executable(python_interop_peer tests/python_interop_peer.cxx)
+    apply_nix_warnings(python_interop_peer)
+    target_link_libraries(python_interop_peer PRIVATE nix::core)
 endif()
 
 
