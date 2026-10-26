@@ -33,7 +33,7 @@ set(NIX_WARNINGS
 set(NIX_GCC_EXTRA_WARNINGS
     -Wlogical-op             # Warn about suspicious uses of logical operators
     -Wduplicated-cond        # Warn about duplicated conditions in if-else chains
-    -Wduplicated-branch      # Warn if multiple branches of an if/else have the same code
+    -Wduplicated-branches      # Warn if multiple branches of an if/else have the same code
 )
 
 # Helper function to apply warnings to a target
@@ -54,6 +54,27 @@ target_include_directories(nix_core
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
       $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
+
+apply_nix_warnings(nix_core)
+
+# Enable testing framework
+enable_testing()
+
+# Add the test executable
+add_executable(test_spsc_ring_buffer
+    tests/test_spsc_ring_buffer.cxx
+)
+
+# Apply your default warning flags function to the test target
+apply_nix_warnings(test_spsc_ring_buffer)
+
+target_link_libraries(test_spsc_ring_buffer
+    PRIVATE
+        nix::core
+)
+
+# Register the executable as a CTest test case
+add_test(NAME SpscRingBufferBasicTest COMMAND test_spsc_ring_buffer)
 
 
 include(GNUInstallDirs)
