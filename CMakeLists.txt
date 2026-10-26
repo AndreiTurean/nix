@@ -101,6 +101,11 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_link_libraries(test_shm_channel PRIVATE nix::core)
   add_test(NAME ShmChannelTest COMMAND test_shm_channel)
 
+    add_executable(test_serialized_message tests/test_serialized_message.cxx)
+    apply_nix_warnings(test_serialized_message)
+    target_link_libraries(test_serialized_message PRIVATE nix::core)
+    add_test(NAME SerializedMessagePortableFrameTest COMMAND test_serialized_message)
+
     add_executable(test_shm_cleanup tests/test_shm_cleanup.cxx)
     apply_nix_warnings(test_shm_cleanup)
     target_link_libraries(test_shm_cleanup PRIVATE nix::core)

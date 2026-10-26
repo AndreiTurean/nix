@@ -1,0 +1,81 @@
+# Nix IPC Middleware
+
+A high-performance, lock-free Inter-Process Communication (IPC) library built in **C++20**, leveraging POSIX shared memory (`shm_open`, `mmap`) for ultra-low latency data exchange between nodes.
+
+## Architecture & Core Components
+
+- **`SpscRingBuffer`**: A fixed-size, lock-free Single-Producer Single-Consumer ring buffer using atomic operations with acquire-release semantics and cache-line alignment (`alignas(64)`) to eliminate false sharing.
+- **`ShmChannel`**: RAII wrapper managing POSIX shared memory segments with process-shared synchronization. It exposes an MPMC queue: concurrent publishers and subscribers are supported, and subscribers compete for messages rather than receiving broadcast copies.
+- **`Publisher` & `Subscriber`**: Strongly-typed endpoints bound to named topics.
+- **`Node`**: Central factory context managing endpoint creation and system handles.
+- **`nix-daemon`**: Required Unix-domain-socket registry for active nodes and their publisher/subscriber endpoints. It logs node lifecycle, registrations, and discovery queries. It handles control-plane metadata only; message payloads travel directly through shared memory.
+- **`nix-cleanup-shm`**: Validates Nix shared-memory metadata and reports channels whose owner process has exited. It is report-only by default; pass `--apply` to unlink stale channel names.
+
+## Getting Started
+
+The project is split by role: `nix/include/nix` and `nix/src` contain the reusable library, while `nix-daemon/src` contains the daemon and shared-memory cleanup executables. Tests and runnable examples remain in `tests` and `examples`.
+
+Stale shared-memory channels can be inspected with `build/default/nix/bin/nix-cleanup-shm`. It reports stale Nix-owned segments by default; pass `--apply` to unlink them. The tool validates each segment's versioned header and owner PID/start-time, and ignores unrelated or partially initialized shared-memory objects. Channel mutexes are process-shared and robust, so surviving participants recover a lock held by a process that exited unexpectedly.
+
+Each channel also records a message type fingerprint based on its compiler type signature, size, and alignment. Opening a channel with a different type or incompatible size/alignment is rejected. C++ cannot reflect over aggregate fields to detect every same-size schema edit, so applications that evolve message layouts should specialize `nix::SharedTypeFingerprint<T>` with an explicit schema/version value and change it whenever the wire layout changes. Payloads must be trivially copyable.
+
+Publishers check the daemon's live endpoint registry before writing. If no subscriber is registered, the publish call succeeds but discards the message and any queued backlog instead of retaining stale data for a future subscriber. While subscribers are registered, normal bounded-queue backpressure applies; publishers can retry when the ring is full. Endpoint destruction unregisters it immediately, and daemon disconnect cleanup handles crashed nodes.
+
+The `examples/versioned_message.cxx` example demonstrates a custom message and a `nix::SharedTypeFingerprint<T>` specialization. Increment the explicit fingerprint whenever fields are added, removed, reordered, or change meaning or representation; producers and subscribers must use the same schema version.
+
+### Prerequisites
+- A modern C++20 compiler (GCC/Clang)
+- CMake (3.20+)
+- Linux (POSIX shared memory support)
+
+### Building & Running Tests
+```bash
+# Configure the project
+cmake --preset default
+
+# Build all targets and tests
+cmake --build --preset default
+
+# Run the test suite via CTest
+cd build/default && ctest --output-on-failure
+```
+
+### Counter Example
+
+Start the manager, then run the publisher and subscriber in separate terminals. The subscriber waits until the publisher registers the topic, then displays each received counter value.
+
+```bash
+./build/default/nix/bin/nix-daemon
+./build/default/nix/bin/counter_publisher
+./build/default/nix/bin/counter_subscriber
+```
+
+Both examples use the `/nix_example_counter` topic and carry `std::int32_t` values. Stop each process with Ctrl+C.
+
+### Python Nodes
+
+Install the Python extension from the repository with `python3 -m pip install .`. Its CPython binding is implemented in `nix/src/python_interop.cxx`; Python creates `Node`, `Publisher`, and `Subscriber` instances directly. Python owns payload serialization and decoding; the native binding wraps those bytes in a portable frame.
+
+The frame is exactly 624 bytes in shared memory. Its first 16 bytes are: bytes 0-3, ASCII `NIXM`; bytes 4-5, format version as an unsigned 16-bit big-endian integer; bytes 6-7, schema-label length as unsigned 16-bit big-endian; bytes 8-9, encoding-label length as unsigned 16-bit big-endian; bytes 10-11, reserved and required to be zero; bytes 12-15, payload length as an unsigned 32-bit big-endian integer. The header is followed by the schema label, encoding label, and payload without gaps. Remaining bytes are zero padding and must remain zero. Schema and encoding labels are printable ASCII, limited to 64 and 32 bytes respectively; payloads are limited to 512 bytes. Decoders reject unsupported versions, invalid lengths, nonzero reserved/padding bytes, invalid labels, and incorrect magic.
+
+```bash
+python3 examples/python_counter_publisher.py
+python3 examples/python_counter_subscriber.py
+```
+
+The Python and C++ counter nodes use the same `/nix_example_counter` topic and canonical `int32` wire format (`nix.counter.int32/v1`, `application/x-nix-int32-le`), so they can interoperate in either direction. Python serializes with `struct.pack("<i", value)` and decodes with `struct.unpack("<i", payload)`; other message schemas may use JSON, MessagePack, Protocol Buffers, or another agreed encoding by supplying matching schema and encoding labels.
+
+### Inspect Active Topics
+
+With `nix-daemon` running, `nix-list` displays active topics, endpoint counts, node names, and registered type identifiers. Pass a topic name to filter the output.
+
+```bash
+./build/default/nix/bin/nix-list
+./build/default/nix/bin/nix-list /nix_example_counter
+```
+
+The compiled schema-fingerprint example can be run with:
+
+```bash
+./build/default/nix/bin/versioned_message_example
+```
