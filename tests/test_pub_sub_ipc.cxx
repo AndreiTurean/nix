@@ -17,18 +17,41 @@ struct TestMessage {
 
 class DaemonProcess {
 public:
-    explicit DaemonProcess(const char* executablePath)
-        : _socketPath("/tmp/nix-daemon-test-" + std::to_string(static_cast<long long>(getpid())) + ".sock"), _process(-1) {
+    explicit DaemonProcess(const char* executablePath, std::string_view suffix = {})
+        : _executablePath(executablePath),
+          _socketPath("/tmp/nix-daemon-test-" + std::to_string(static_cast<long long>(getpid()))
+              + std::string(suffix) + ".sock"), _process(-1) {
         if (setenv("NIX_DAEMON_SOCKET", _socketPath.c_str(), 1) != 0) {
             throw std::runtime_error("failed to configure nix-daemon test socket");
         }
 
+        start();
+    }
+
+    void stop() {
+        if (_process != -1) {
+            kill(_process, SIGTERM);
+            waitpid(_process, nullptr, 0);
+            _process = -1;
+        }
+    }
+
+    ~DaemonProcess() {
+        stop();
+        unlink(_socketPath.c_str());
+    }
+
+    DaemonProcess(const DaemonProcess&) = delete;
+    DaemonProcess& operator=(const DaemonProcess&) = delete;
+
+private:
+    void start() {
         _process = fork();
         if (_process == -1) {
             throw std::runtime_error("failed to fork nix-daemon test process");
         }
         if (_process == 0) {
-            execl(executablePath, executablePath, "--socket", _socketPath.c_str(), static_cast<char*>(nullptr));
+            execl(_executablePath.c_str(), _executablePath.c_str(), "--socket", _socketPath.c_str(), static_cast<char*>(nullptr));
             _exit(127);
         }
 
@@ -52,18 +75,7 @@ public:
         throw std::runtime_error("nix-daemon test process did not start");
     }
 
-    ~DaemonProcess() {
-        if (_process != -1) {
-            kill(_process, SIGTERM);
-            waitpid(_process, nullptr, 0);
-        }
-        unlink(_socketPath.c_str());
-    }
-
-    DaemonProcess(const DaemonProcess&) = delete;
-    DaemonProcess& operator=(const DaemonProcess&) = delete;
-
-private:
+    std::string _executablePath;
     std::string _socketPath;
     pid_t _process;
 };
@@ -152,6 +164,22 @@ int main(int argc, char** argv) {
     {
         nix::Node observerNode("observer_process");
         assert(observerNode.discover(topicName).empty());
+    }
+
+    {
+        DaemonProcess disconnectedDaemon(argv[1], "-disconnected");
+        nix::Node producerNode("disconnected_producer");
+        nix::Node subscriberNode("disconnected_consumer");
+        constexpr std::string_view disconnectedTopic = "/nix_pub_sub_disconnected_topic";
+        constexpr std::uint64_t disconnectedCapacity = 2;
+        shm_unlink(disconnectedTopic.data());
+        auto publisher = producerNode.createPublisher<TestMessage, disconnectedCapacity>(disconnectedTopic);
+        auto subscriber = subscriberNode.createSubscriber<TestMessage, disconnectedCapacity>(disconnectedTopic);
+
+        disconnectedDaemon.stop();
+        assert(publisher->publish(TestMessage{1, 10}));
+        auto received = subscriber->receive();
+        assert(received.has_value() && received->sequenceId == 1);
     }
 
     std::cout << "Publisher-Subscriber zero-loss IPC test passed successfully!" << std::endl;
