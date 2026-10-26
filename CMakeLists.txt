@@ -61,21 +61,18 @@ apply_nix_warnings(nix_core)
 enable_testing()
 
 # Add the test executable
-add_executable(test_spsc_ring_buffer
-    tests/test_spsc_ring_buffer.cxx
-)
-
-# Apply your default warning flags function to the test target
+add_executable(test_spsc_ring_buffer tests/test_spsc_ring_buffer.cxx)
 apply_nix_warnings(test_spsc_ring_buffer)
+target_link_libraries(test_spsc_ring_buffer PRIVATE nix::core)
 
-target_link_libraries(test_spsc_ring_buffer
-    PRIVATE
-        nix::core
-)
+add_executable(test_shm_channel tests/test_shm_channel.cxx)
+apply_nix_warnings(test_shm_channel)
+target_link_libraries(test_shm_channel PRIVATE nix::core)
+
 
 # Register the executable as a CTest test case
 add_test(NAME SpscRingBufferBasicTest COMMAND test_spsc_ring_buffer)
-
+add_test(NAME ShmChannelTest COMMAND test_shm_channel)
 
 include(GNUInstallDirs)
 
