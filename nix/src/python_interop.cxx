@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <exception>
 #include <chrono>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -214,31 +215,86 @@ PyObject* subscriberReceive(SubscriberObject* self, PyObject*) {
         Py_RETURN_NONE;
     }
 
-    const auto& message = *received;
-    if (message.version != nix::serializedMessageVersion
-        || message.schemaLength > message.schema.size()
-        || message.encodingLength > message.encoding.size()
-        || message.payloadLength > message.payload.size()) {
-        PyErr_SetString(PyExc_RuntimeError, "received serialized envelope has invalid metadata");
-        return nullptr;
-    }
-    const std::string_view schema(message.schema.data(), message.schemaLength);
-    const std::string_view encoding(message.encoding.data(), message.encodingLength);
-    PyObject* schemaObject = PyUnicode_FromStringAndSize(schema.data(), static_cast<Py_ssize_t>(schema.size()));
-    PyObject* encodingObject = PyUnicode_FromStringAndSize(encoding.data(), static_cast<Py_ssize_t>(encoding.size()));
-    PyObject* payloadObject = PyBytes_FromStringAndSize(
-        reinterpret_cast<const char*>(message.payload.data()), static_cast<Py_ssize_t>(message.payloadLength));
-    if (schemaObject == nullptr || encodingObject == nullptr || payloadObject == nullptr) {
+    try {
+        const auto decoded = nix::decodeSerializedMessage(*received);
+        PyObject* schemaObject = PyUnicode_FromStringAndSize(decoded.schema.data(),
+            static_cast<Py_ssize_t>(decoded.schema.size()));
+        PyObject* encodingObject = PyUnicode_FromStringAndSize(decoded.encoding.data(),
+            static_cast<Py_ssize_t>(decoded.encoding.size()));
+        PyObject* payloadObject = PyBytes_FromStringAndSize(
+            reinterpret_cast<const char*>(decoded.payload.data()), static_cast<Py_ssize_t>(decoded.payload.size()));
+        if (schemaObject == nullptr || encodingObject == nullptr || payloadObject == nullptr) {
+            Py_XDECREF(schemaObject);
+            Py_XDECREF(encodingObject);
+            Py_XDECREF(payloadObject);
+            return nullptr;
+        }
+        PyObject* result = PyTuple_Pack(3, schemaObject, encodingObject, payloadObject);
         Py_XDECREF(schemaObject);
         Py_XDECREF(encodingObject);
         Py_XDECREF(payloadObject);
+        return result;
+    } catch (const std::exception& error) {
+        setPythonException(error);
         return nullptr;
     }
-    PyObject* result = PyTuple_Pack(3, schemaObject, encodingObject, payloadObject);
-    Py_DECREF(schemaObject);
-    Py_DECREF(encodingObject);
-    Py_DECREF(payloadObject);
-    return result;
+}
+
+PyObject* encodeMessage(PyObject*, PyObject* args) {
+    const char* schema = nullptr;
+    const char* encoding = nullptr;
+    const char* payload = nullptr;
+    Py_ssize_t payloadLength = 0;
+    if (!PyArg_ParseTuple(args, "ssy#:encode_message", &schema, &encoding, &payload, &payloadLength)) {
+        return nullptr;
+    }
+    try {
+        const auto* payloadBytes = reinterpret_cast<const std::uint8_t*>(payload);
+        const auto message = nix::makeSerializedMessage(schema, encoding, payloadBytes,
+            static_cast<std::size_t>(payloadLength));
+        return PyBytes_FromStringAndSize(reinterpret_cast<const char*>(message.bytes.data()),
+            static_cast<Py_ssize_t>(message.bytes.size()));
+    } catch (const std::exception& error) {
+        setPythonException(error);
+        return nullptr;
+    }
+}
+
+PyObject* decodeMessage(PyObject*, PyObject* args) {
+    const char* frameBytes = nullptr;
+    Py_ssize_t frameLength = 0;
+    if (!PyArg_ParseTuple(args, "y#:decode_message", &frameBytes, &frameLength)) {
+        return nullptr;
+    }
+    if (frameLength != static_cast<Py_ssize_t>(nix::serializedMessageCapacity)) {
+        PyErr_SetString(PyExc_ValueError, "serialized frame has an invalid size");
+        return nullptr;
+    }
+    nix::SerializedMessage message{};
+    std::memcpy(message.bytes.data(), frameBytes, message.bytes.size());
+    try {
+        const auto decoded = nix::decodeSerializedMessage(message);
+        PyObject* schemaObject = PyUnicode_FromStringAndSize(decoded.schema.data(),
+            static_cast<Py_ssize_t>(decoded.schema.size()));
+        PyObject* encodingObject = PyUnicode_FromStringAndSize(decoded.encoding.data(),
+            static_cast<Py_ssize_t>(decoded.encoding.size()));
+        PyObject* payloadObject = PyBytes_FromStringAndSize(
+            reinterpret_cast<const char*>(decoded.payload.data()), static_cast<Py_ssize_t>(decoded.payload.size()));
+        if (schemaObject == nullptr || encodingObject == nullptr || payloadObject == nullptr) {
+            Py_XDECREF(schemaObject);
+            Py_XDECREF(encodingObject);
+            Py_XDECREF(payloadObject);
+            return nullptr;
+        }
+        PyObject* result = PyTuple_Pack(3, schemaObject, encodingObject, payloadObject);
+        Py_DECREF(schemaObject);
+        Py_DECREF(encodingObject);
+        Py_DECREF(payloadObject);
+        return result;
+    } catch (const std::exception& error) {
+        PyErr_SetString(PyExc_ValueError, error.what());
+        return nullptr;
+    }
 }
 
 PyObject* nodeDiscover(NodeObject* self, PyObject* args, PyObject* keywords) {
@@ -297,12 +353,20 @@ PyMethodDef subscriberMethods[] = {
     {nullptr, nullptr, 0, nullptr},
 };
 
+PyMethodDef moduleMethods[] = {
+    {"encode_message", encodeMessage, METH_VARARGS,
+        "Encode schema, encoding, and payload bytes into the canonical Nix frame."},
+    {"decode_message", decodeMessage, METH_VARARGS,
+        "Validate and decode a canonical Nix frame."},
+    {nullptr, nullptr, 0, nullptr},
+};
+
 PyModuleDef moduleDefinition = {
     PyModuleDef_HEAD_INIT,
     "_nixipc",
     "Native Nix IPC node and serialized message bindings.",
     -1,
-    nullptr,
+    moduleMethods,
 };
 
 } // namespace

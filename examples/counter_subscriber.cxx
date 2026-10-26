@@ -1,7 +1,6 @@
 #include <nix/nix.hxx>
 #include <nix/serialized_message.hxx>
 
-#include <array>
 #include <bit>
 #include <chrono>
 #include <cstdint>
@@ -40,13 +39,10 @@ int main(int argc, char** argv) {
             for (;;) {
                 const auto message = subscriber->receiveBlocking();
                 if (message.has_value()) {
-                    const auto& frame = *message;
-                    if (frame.version != nix::serializedMessageVersion
-                        || frame.schemaLength != std::string_view("nix.counter.int32/v1").size()
-                        || frame.encodingLength != std::string_view("application/x-nix-int32-le").size()
-                        || frame.payloadLength != 4U
-                        || std::string_view(frame.schema.data(), frame.schemaLength) != "nix.counter.int32/v1"
-                        || std::string_view(frame.encoding.data(), frame.encodingLength) != "application/x-nix-int32-le") {
+                    const auto frame = nix::decodeSerializedMessage(*message);
+                    if (frame.schema != "nix.counter.int32/v1"
+                        || frame.encoding != "application/x-nix-int32-le"
+                        || frame.payload.size() != 4U) {
                         std::cerr << "unsupported serialized counter frame\n";
                         return 1;
                     }
