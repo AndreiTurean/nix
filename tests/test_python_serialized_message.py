@@ -20,6 +20,17 @@ class SerializedMessageInteropTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             decode_message(bytes(frame))
 
+    def test_maximum_63_kib_payload_round_trips(self):
+        payload = bytes(range(256)) * 252
+        self.assertEqual(len(payload), 63 * 1024)
+        frame = encode_message("schema/v1", "application/octet-stream", payload)
+        self.assertEqual(decode_message(frame), ("schema/v1", "application/octet-stream", payload))
+
+    def test_payload_over_63_kib_is_rejected(self):
+        payload = bytes(63 * 1024 + 1)
+        with self.assertRaises(RuntimeError):
+            encode_message("schema/v1", "application/octet-stream", payload)
+
 
 if __name__ == "__main__":
     unittest.main()

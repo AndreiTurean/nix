@@ -15,7 +15,7 @@ namespace nix {
 inline constexpr std::uint16_t serializedMessageVersion = 1U;
 inline constexpr std::size_t serializedSchemaCapacity = 64U;
 inline constexpr std::size_t serializedEncodingCapacity = 32U;
-inline constexpr std::size_t serializedPayloadCapacity = 512U;
+inline constexpr std::size_t serializedPayloadCapacity = 63U * 1024U;
 inline constexpr std::size_t serializedMessageHeaderSize = 16U;
 inline constexpr std::size_t serializedMessageCapacity = serializedMessageHeaderSize
     + serializedSchemaCapacity + serializedEncodingCapacity + serializedPayloadCapacity;
@@ -147,7 +147,7 @@ inline SerializedMessageView decodeSerializedMessage(const SerializedMessage& me
 
 template <>
 struct SharedTypeFingerprint<SerializedMessage> {
-    static constexpr std::uint64_t value = 0x4e49584d00010001ULL;
+    static constexpr std::uint64_t value = 0x4e49584d00010002ULL;
 };
 
 } // namespace nix

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 int main() {
     constexpr std::array<std::uint8_t, 25> expectedPrefix{
@@ -57,7 +58,7 @@ int main() {
     assertInvalid(malformed);
 
     malformed = message;
-    malformed.bytes[14] = 0x02;
+    malformed.bytes[14] = 0xfc;
     malformed.bytes[15] = 0x01;
     assertInvalid(malformed);
 
@@ -77,6 +78,23 @@ int main() {
         rejectedOversized = true;
     }
     assert(rejectedOversized);
+
+    const std::vector<std::uint8_t> maximumPayload(nix::serializedPayloadCapacity, 0xa5U);
+    const auto maximumMessage = nix::makeSerializedMessage("schema", "raw",
+        maximumPayload.data(), maximumPayload.size());
+    const auto maximumDecoded = nix::decodeSerializedMessage(maximumMessage);
+    assert(maximumDecoded.payload.size() == nix::serializedPayloadCapacity);
+    assert(std::equal(maximumPayload.begin(), maximumPayload.end(), maximumDecoded.payload.begin()));
+
+    const std::vector<std::uint8_t> tooLargePayload(nix::serializedPayloadCapacity + 1U, 0U);
+    bool rejectedTooLargePayload = false;
+    try {
+        static_cast<void>(nix::makeSerializedMessage("schema", "raw",
+            tooLargePayload.data(), tooLargePayload.size()));
+    } catch (const std::invalid_argument&) {
+        rejectedTooLargePayload = true;
+    }
+    assert(rejectedTooLargePayload);
 
     return 0;
 }
