@@ -1,4 +1,4 @@
-#include <nix/core.hxx>
+#include <nix/nix.hxx>
 #include <cassert>
 #include <iostream>
 

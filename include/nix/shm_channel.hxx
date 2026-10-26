@@ -1,11 +1,10 @@
 #pragma once
 
-#include <nix/core.hxx>
+#include <nix/spsc_ring_buffer.hxx>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <memory>
-#include <new>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -13,9 +12,9 @@
 
 namespace nix {
 
-enum class ShmMode {
-    Create, // Creates the shared memory segment, truncates it, and constructs the ring buffer
-    Open    // Opens an existing shared memory segment and maps to it
+enum class ShmMode : uint8_t {
+    Create = 0x00, // Creates the shared memory segment, truncates it, and constructs the ring buffer
+    Open = 0x01,    // Opens an existing shared memory segment and maps to it
 };
 
 template <typename T, std::uint64_t Capacity>

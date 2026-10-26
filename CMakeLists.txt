@@ -45,7 +45,7 @@ function(apply_nix_warnings target_name)
 endfunction()
 
 add_library(nix_core
-  source/core.cxx
+  source/nix.cxx
 )
 add_library(nix::core ALIAS nix_core)
 
@@ -64,16 +64,20 @@ enable_testing()
 add_executable(test_spsc_ring_buffer tests/test_spsc_ring_buffer.cxx)
 apply_nix_warnings(test_spsc_ring_buffer)
 target_link_libraries(test_spsc_ring_buffer PRIVATE nix::core)
+add_test(NAME SpscRingBufferBasicTest COMMAND test_spsc_ring_buffer)
 
 add_executable(test_shm_channel tests/test_shm_channel.cxx)
 apply_nix_warnings(test_shm_channel)
 target_link_libraries(test_shm_channel PRIVATE nix::core)
-
-
-# Register the executable as a CTest test case
-add_test(NAME SpscRingBufferBasicTest COMMAND test_spsc_ring_buffer)
 add_test(NAME ShmChannelTest COMMAND test_shm_channel)
 
+add_executable(test_pub_sub_ipc tests/test_pub_sub_ipc.cxx)
+apply_nix_warnings(test_pub_sub_ipc)
+target_link_libraries(test_pub_sub_ipc PRIVATE nix::core)
+add_test(NAME PublisherSubcriberIpcTest COMMAND test_pub_sub_ipc)
+
+
+### Install step
 include(GNUInstallDirs)
 
 install(TARGETS nix_core

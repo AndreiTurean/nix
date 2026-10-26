@@ -2,6 +2,7 @@
 #include <cassert>
 #include <iostream>
 #include <cstdint>
+#include <string_view>
 
 int main() {
     // Use a unique topic name for testing
