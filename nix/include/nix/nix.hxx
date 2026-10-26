@@ -5,3 +5,4 @@
 #include <nix/publisher.hxx>
 #include <nix/subscriber.hxx>
 #include <nix/node.hxx>
+#include <nix/daemon.hxx>

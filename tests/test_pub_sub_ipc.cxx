@@ -2,13 +2,75 @@
 #include <cassert>
 #include <iostream>
 #include <cstdint>
+#include <stdexcept>
+#include <string>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
 
 struct TestMessage {
     std::uint64_t sequenceId;
     std::int32_t payload;
 };
 
-std::int32_t main() {
+class DaemonProcess {
+public:
+    explicit DaemonProcess(const char* executablePath)
+        : _socketPath("/tmp/nix-daemon-test-" + std::to_string(static_cast<long long>(getpid())) + ".sock"), _process(-1) {
+        if (setenv("NIX_DAEMON_SOCKET", _socketPath.c_str(), 1) != 0) {
+            throw std::runtime_error("failed to configure nix-daemon test socket");
+        }
+
+        _process = fork();
+        if (_process == -1) {
+            throw std::runtime_error("failed to fork nix-daemon test process");
+        }
+        if (_process == 0) {
+            execl(executablePath, executablePath, "--socket", _socketPath.c_str(), static_cast<char*>(nullptr));
+            _exit(127);
+        }
+
+        const timespec retryDelay{0, 10000000};
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            const int probeSocket = socket(AF_UNIX, SOCK_STREAM, 0);
+            if (probeSocket == -1) {
+                throw std::runtime_error("failed to create nix-daemon readiness socket");
+            }
+            sockaddr_un address{};
+            address.sun_family = AF_UNIX;
+            std::copy(_socketPath.begin(), _socketPath.end(), address.sun_path);
+            address.sun_path[_socketPath.size()] = '\0';
+            const int connectResult = connect(probeSocket, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
+            close(probeSocket);
+            if (connectResult == 0) {
+                return;
+            }
+            nanosleep(&retryDelay, nullptr);
+        }
+        throw std::runtime_error("nix-daemon test process did not start");
+    }
+
+    ~DaemonProcess() {
+        if (_process != -1) {
+            kill(_process, SIGTERM);
+            waitpid(_process, nullptr, 0);
+        }
+        unlink(_socketPath.c_str());
+    }
+
+    DaemonProcess(const DaemonProcess&) = delete;
+    DaemonProcess& operator=(const DaemonProcess&) = delete;
+
+private:
+    std::string _socketPath;
+    pid_t _process;
+};
+
+int main(int argc, char** argv) {
+    assert(argc == 2);
+    DaemonProcess daemon(argv[1]);
     constexpr std::string_view topicName = "/nix_pub_sub_test_topic";
     constexpr std::uint64_t capacity = 16; // Must be a power of 2
 
@@ -23,6 +85,14 @@ std::int32_t main() {
         // 2. Create publisher and subscriber endpoints via node factories
         auto pub = producerNode.createPublisher<TestMessage, capacity>(topicName);
         auto sub = subscriberNode.createSubscriber<TestMessage, capacity>(topicName);
+
+        const auto discovered = producerNode.discover(topicName);
+        assert(discovered.size() == 2);
+        assert(discovered[0].topicName == topicName);
+        assert(discovered[1].topicName == topicName);
+        assert(discovered[0].typeName == typeid(TestMessage).name());
+        assert(discovered[1].typeName == typeid(TestMessage).name());
+        assert(producerNode.discover("/unknown_topic").empty());
 
         // 3. Verify initial states
         assert(sub->empty() == true);
@@ -66,6 +136,11 @@ std::int32_t main() {
             assert(msg.has_value());
         }
         assert(sub->empty() == true);
+    }
+
+    {
+        nix::Node observerNode("observer_process");
+        assert(observerNode.discover(topicName).empty());
     }
 
     std::cout << "Publisher-Subscriber zero-loss IPC test passed successfully!" << std::endl;

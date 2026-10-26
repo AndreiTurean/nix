@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(nix VERSION 0.1.0 LANGUAGES CXX)
 
+find_package(Threads REQUIRED)
+
 # Enforce modern C++
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -45,17 +47,35 @@ function(apply_nix_warnings target_name)
 endfunction()
 
 add_library(nix_core
-  source/nix.cxx
+    nix/src/nix.cxx
+    nix/src/daemon_client.cxx
 )
 add_library(nix::core ALIAS nix_core)
 
 target_include_directories(nix_core
   PUBLIC
-      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/nix/include>
       $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
+target_link_libraries(nix_core PUBLIC Threads::Threads)
 
 apply_nix_warnings(nix_core)
+
+add_executable(nix-daemon nix-daemon/src/daemon.cxx)
+target_link_libraries(nix-daemon PRIVATE nix::core Threads::Threads)
+apply_nix_warnings(nix-daemon)
+
+add_executable(nix-cleanup-shm nix-daemon/src/cleanup_shm.cxx)
+target_link_libraries(nix-cleanup-shm PRIVATE nix::core)
+apply_nix_warnings(nix-cleanup-shm)
+
+add_executable(counter_publisher examples/counter_publisher.cxx)
+target_link_libraries(counter_publisher PRIVATE nix::core)
+apply_nix_warnings(counter_publisher)
+
+add_executable(counter_subscriber examples/counter_subscriber.cxx)
+target_link_libraries(counter_subscriber PRIVATE nix::core)
+apply_nix_warnings(counter_subscriber)
 
 # Enable testing framework
 enable_testing()
@@ -72,24 +92,29 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_link_libraries(test_shm_channel PRIVATE nix::core)
   add_test(NAME ShmChannelTest COMMAND test_shm_channel)
 
+    add_executable(test_shm_cleanup tests/test_shm_cleanup.cxx)
+    apply_nix_warnings(test_shm_cleanup)
+    target_link_libraries(test_shm_cleanup PRIVATE nix::core)
+    add_test(NAME ShmCleanupTest COMMAND test_shm_cleanup $<TARGET_FILE:nix-cleanup-shm>)
+
   add_executable(test_pub_sub_ipc tests/test_pub_sub_ipc.cxx)
   apply_nix_warnings(test_pub_sub_ipc)
   target_link_libraries(test_pub_sub_ipc PRIVATE nix::core)
-  add_test(NAME PublisherSubcriberIpcTest COMMAND test_pub_sub_ipc)
+    add_test(NAME PublisherSubcriberIpcTest COMMAND test_pub_sub_ipc $<TARGET_FILE:nix-daemon>)
 endif()
 
 
 ### Install step
 include(GNUInstallDirs)
 
-install(TARGETS nix_core
+install(TARGETS nix_core nix-daemon nix-cleanup-shm counter_publisher counter_subscriber
     EXPORT nixTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
-install(DIRECTORY include/
+install(DIRECTORY nix/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 

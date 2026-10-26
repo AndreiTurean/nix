@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <type_traits>
 
 namespace nix {
 
@@ -12,6 +13,7 @@ namespace nix {
 template <typename T, std::uint64_t Capacity>
 class SpscRingBuffer {
     static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of 2");
+    static_assert(std::is_trivially_copyable_v<T>, "T must be trivially copyable for shared-memory storage");
 
 public:
     SpscRingBuffer() : _head(0), _tail(0) {}

@@ -5,11 +5,19 @@ A high-performance, lock-free Inter-Process Communication (IPC) library built in
 ## Architecture & Core Components
 
 - **`SpscRingBuffer`**: A fixed-size, lock-free Single-Producer Single-Consumer ring buffer using atomic operations with acquire-release semantics and cache-line alignment (`alignas(64)`) to eliminate false sharing.
-- **`ShmChannel`**: RAII wrapper managing POSIX shared memory segments, mapping regions safely via custom deleters and placement `new`.
+- **`ShmChannel`**: RAII wrapper managing POSIX shared memory segments with process-shared synchronization. It exposes an MPMC queue: concurrent publishers and subscribers are supported, and subscribers compete for messages rather than receiving broadcast copies.
 - **`Publisher` & `Subscriber`**: Strongly-typed endpoints bound to named topics.
 - **`Node`**: Central factory context managing endpoint creation and system handles.
+- **`nix-daemon`**: Required Unix-domain-socket registry for active nodes and their publisher/subscriber endpoints. It logs node lifecycle, registrations, and discovery queries. It handles control-plane metadata only; message payloads travel directly through shared memory.
+- **`nix-cleanup-shm`**: Validates Nix shared-memory metadata and reports channels whose owner process has exited. It is report-only by default; pass `--apply` to unlink stale channel names.
 
 ## Getting Started
+
+The project is split by role: `nix/include/nix` and `nix/src` contain the reusable library, while `nix-daemon/src` contains the daemon and shared-memory cleanup executables. Tests and runnable examples remain in `tests` and `examples`.
+
+Stale shared-memory channels can be inspected with `build/default/nix/bin/nix-cleanup-shm`. It reports stale Nix-owned segments by default; pass `--apply` to unlink them. The tool validates each segment's versioned header and owner PID/start-time, and ignores unrelated or partially initialized shared-memory objects. Channel mutexes are process-shared and robust, so surviving participants recover a lock held by a process that exited unexpectedly.
+
+Each channel also records a message type fingerprint based on its compiler type signature, size, and alignment. Opening a channel with a different type or incompatible size/alignment is rejected. C++ cannot reflect over aggregate fields to detect every same-size schema edit, so applications that evolve message layouts should specialize `nix::SharedTypeFingerprint<T>` with an explicit schema/version value and change it whenever the wire layout changes. Payloads must be trivially copyable.
 
 ### Prerequisites
 - A modern C++20 compiler (GCC/Clang)
@@ -26,3 +34,16 @@ cmake --build --preset default
 
 # Run the test suite via CTest
 cd build/default && ctest --output-on-failure
+```
+
+### Counter Example
+
+Start the manager, then run the publisher and subscriber in separate terminals. The subscriber waits until the publisher registers the topic, then displays each received counter value.
+
+```bash
+./build/default/nix/bin/nix-daemon
+./build/default/nix/bin/counter_publisher
+./build/default/nix/bin/counter_subscriber
+```
+
+Both examples use the `/nix_example_counter` topic and carry `std::int32_t` values. Stop each process with Ctrl+C.

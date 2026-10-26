@@ -2,29 +2,37 @@
 
 #include <nix/publisher.hxx>
 #include <nix/subscriber.hxx>
+#include <nix/daemon.hxx>
 #include <string>
 #include <string_view>
 #include <memory>
+#include <typeinfo>
 
 namespace nix {
 
 class Node {
 public:
     explicit Node(std::string_view nodeName)
-        : _nodeName(nodeName) {}
+        : _nodeName(nodeName), _daemonClient(nodeName) {}
 
     // Factory method to create a Publisher tied to this Node
     template <typename T, std::uint64_t Capacity>
     std::unique_ptr<Publisher<T, Capacity>> createPublisher(std::string_view topicName) {
-        // TODO: Register topicName and _nodeName with the Central Manager here!
-        return std::make_unique<Publisher<T, Capacity>>(topicName);
+        auto publisher = std::make_unique<Publisher<T, Capacity>>(topicName);
+        _daemonClient.registerEndpoint(topicName, typeid(T).name(), EndpointRole::Publisher, Capacity);
+        return publisher;
     }
 
     // Factory method to create a Subscriber tied to this Node
     template <typename T, std::uint64_t Capacity>
     std::unique_ptr<Subscriber<T, Capacity>> createSubscriber(std::string_view topicName) {
-        // TODO: Register subscription intent with the Central Manager here!
-        return std::make_unique<Subscriber<T, Capacity>>(topicName);
+        auto subscriber = std::make_unique<Subscriber<T, Capacity>>(topicName);
+        _daemonClient.registerEndpoint(topicName, typeid(T).name(), EndpointRole::Subscriber, Capacity);
+        return subscriber;
+    }
+
+    std::vector<EndpointInfo> discover(std::string_view topicName = {}) {
+        return _daemonClient.discover(topicName);
     }
 
     std::string_view name() const {
@@ -33,6 +41,7 @@ public:
 
 private:
     std::string _nodeName;
+    DaemonClient _daemonClient;
 };
 
 } // namespace nix

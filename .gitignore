@@ -10,5 +10,4 @@ lib/
 *.swp
 *.swo
 
-# Compile commands symlink (optional, or keep it tracked if you prefer)
 compile_commands.json

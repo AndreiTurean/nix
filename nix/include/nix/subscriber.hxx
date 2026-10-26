@@ -16,6 +16,10 @@ public:
         return _channel.pop();
     }
 
+    std::optional<T> receiveBlocking() {
+        return _channel.waitPop();
+    }
+
     bool empty() const {
         return _channel.empty();
     }
