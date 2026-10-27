@@ -1,11 +1,11 @@
 # Nix IPC Middleware
 
-A high-performance, lock-free Inter-Process Communication (IPC) library built in **C++20**, leveraging POSIX shared memory (`shm_open`, `mmap`) for ultra-low latency data exchange between nodes.
+A **C++20** Inter-Process Communication (IPC) library that uses POSIX shared memory (`shm_open`, `mmap`) to exchange data between nodes.
 
 ## Architecture & Core Components
 
-- **`SpscRingBuffer`**: A fixed-size, lock-free Single-Producer Single-Consumer ring buffer using atomic operations with acquire-release semantics and cache-line alignment (`alignas(64)`) to eliminate false sharing.
-- **`ShmChannel`**: RAII wrapper managing POSIX shared memory segments with process-shared synchronization. It exposes an MPMC queue: concurrent publishers and subscribers are supported, and subscribers compete for messages rather than receiving broadcast copies.
+- **`SpscRingBuffer`**: A fixed-size, lock-free Single-Producer Single-Consumer ring-buffer implementation using atomic operations with acquire-release semantics and cache-line alignment (`alignas(64)`) to reduce false sharing. These properties describe the ring when used directly, not end-to-end channel operations.
+- **`ShmChannel`**: RAII wrapper managing POSIX shared memory segments. Its queue operations are serialized by a robust, process-shared mutex. This allows multiple publishers and subscribers to safely access the queue concurrently, but channel operations are lock-based, not lock-free; `waitPop()` also blocks while the queue is empty.
 - **`Publisher` & `Subscriber`**: Strongly-typed endpoints bound to named topics.
 - **`Node`**: Central factory context managing endpoint creation and system handles.
 - **`nix-daemon`**: Required Unix-domain-socket registry for active nodes and their publisher/subscriber endpoints. It logs node lifecycle, registrations, and discovery queries. It handles control-plane metadata only; message payloads travel directly through shared memory.
@@ -23,7 +23,7 @@ Each channel also records a message type fingerprint based on its compiler type 
 
 Subscriber endpoint lifetimes are tracked in shared memory, so publishing does not contact the daemon. If no subscriber is active, the publish call succeeds but discards the message and any queued backlog instead of retaining stale data for a future subscriber. While subscribers are active, normal bounded-queue backpressure applies; publishers can retry when the ring is full. Endpoint registration and discovery remain daemon control-plane operations.
 
-Delivery is queue-style: all subscribers to a topic consume from the same queue, so each message is received by at most one subscriber. Multiple subscribers compete to consume messages; they do not each receive a copy. Applications that need broadcast delivery must use a separate future broadcast mode, which would provide an independent copy to every subscriber. No broadcast mode is currently available.
+Delivery is queue-style: all subscribers to a topic consume from the same bounded queue, so each queued message is received by at most one subscriber. Multiple subscribers compete to consume messages; they do not each receive a copy. A push to a full queue fails, and publishing through the subscriber-aware path with no active subscribers discards queued data instead of retaining it. Applications that need broadcast delivery must use a separate future broadcast mode; no broadcast mode is currently available.
 
 The `examples/versioned_message.cxx` example demonstrates a custom message and a `nix::SharedTypeFingerprint<T>` specialization. Increment the explicit fingerprint whenever fields are added, removed, reordered, or change meaning or representation; producers and subscribers must use the same schema version.
 
