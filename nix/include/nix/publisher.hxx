@@ -20,8 +20,7 @@ public:
         _daemonClient->unregisterEndpoint(_topicName, typeid(T).name(), EndpointRole::Publisher, Capacity);
     }
 
-    /// Publishes once to the topic's shared queue; subscribers compete to consume each message.
-    /// A future broadcast mode would be separate and deliver an independent copy to each subscriber.
+    /// Publishes once to the shared channel; each active subscriber can receive the message once.
     bool publish(const T& message) {
         return _channel.pushIfSubscribed(message);
     }

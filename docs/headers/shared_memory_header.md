@@ -19,7 +19,7 @@ This header defines the versioned metadata stored at the beginning of each Nix s
 | `capacity`, `elementSize`, `typeFingerprint` | Describes the payload ring layout and type. |
 | `initializationState` | Distinguishes initializing from ready shared state. |
 
-The associated constants define the current format magic/version and initialization states. Changing shared layout requires considering compatibility and format-version behavior.
+The associated constants define the current format magic/version, recognized older header versions, and initialization states. Changing shared layout requires considering compatibility and format-version behavior. Cleanup recognizes the current version and supported older Nix headers so it can remove abandoned channels after confirming their owner process is gone; it does not treat unknown future versions as Nix channels.
 
 ## `SharedTypeFingerprint<T>`
 

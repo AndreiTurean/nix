@@ -1,7 +1,7 @@
 #pragma once
 
-#include <nix/spsc_ring_buffer.hxx>
 #include <nix/shared_memory_header.hxx>
+#include <array>
 #include <cerrno>
 #include <ctime>
 #include <fstream>
@@ -11,6 +11,8 @@
 #include <string_view>
 #include <system_error>
 #include <memory>
+#include <optional>
+#include <type_traits>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -20,6 +22,8 @@
 
 namespace nix {
 
+inline constexpr std::size_t maxChannelSubscribers = 64;
+
 enum class ShmMode : uint8_t {
     Create = 0x00, // Creates the shared memory segment, truncates it, and constructs the ring buffer
     Open = 0x01,    // Opens an existing shared memory segment and maps to it
@@ -27,7 +31,12 @@ enum class ShmMode : uint8_t {
 
 template <typename T, std::uint64_t Capacity>
 class ShmChannel {
+    static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of 2");
+    static_assert(std::is_trivially_copyable_v<T>, "T must be trivially copyable for shared-memory storage");
+
 public:
+    using SubscriberId = std::size_t;
+
     ShmChannel(std::string_view name, ShmMode mode)
         : _name(name), _isCreator(mode == ShmMode::Create), _fd(-1) {
 
@@ -60,6 +69,19 @@ public:
                 close(_fd);
                 throw std::system_error(savedErrno, std::generic_category(), "ftruncate failed");
             }
+        } else {
+            struct stat fileStatus{};
+            if (fstat(_fd, &fileStatus) == -1) {
+                const int savedErrno = errno;
+                close(_fd);
+                _fd = -1;
+                throw std::system_error(savedErrno, std::generic_category(), "shared-memory channel size mismatch");
+            }
+            if (fileStatus.st_size != static_cast<off_t>(totalSize)) {
+                close(_fd);
+                _fd = -1;
+                throw std::system_error(EINVAL, std::generic_category(), "shared-memory channel size mismatch");
+            }
         }
 
         void* rawPtr = mmap(nullptr, totalSize, PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
@@ -78,6 +100,7 @@ public:
         if (_isCreator) {
             _sharedState = ::new (_mappedMemory.get()) SharedState;
             _sharedState->subscriberCount = 0;
+            _sharedState->writeIndex = 0;
             _sharedState->header.initializationState.store(sharedMemoryInitializing, std::memory_order_relaxed);
             _sharedState->header.magic = sharedMemoryMagic;
             _sharedState->header.version = sharedMemoryVersion;
@@ -130,27 +153,40 @@ public:
 
     void discardPending() {
         MutexLock lock(_sharedState->mutex, _sharedState->condition);
-        while (_sharedState->ringBuffer.pop().has_value()) {
+        for (auto& subscriber : _sharedState->subscribers) {
+            if (subscriber.active) {
+                subscriber.readIndex = _sharedState->writeIndex;
+            }
         }
     }
 
-    void addSubscriber() {
+    SubscriberId addSubscriber() {
         MutexLock lock(_sharedState->mutex, _sharedState->condition);
-        if (_sharedState->subscriberCount == std::numeric_limits<std::uint64_t>::max()) {
-            throw std::overflow_error("shared-memory subscriber count overflow");
+        for (SubscriberId index = 0; index < _sharedState->subscribers.size(); ++index) {
+            auto& subscriber = _sharedState->subscribers[index];
+            if (!subscriber.active) {
+                if (_sharedState->subscriberCount == 0) {
+                    _sharedState->writeIndex = 0;
+                }
+                subscriber.readIndex = _sharedState->writeIndex;
+                subscriber.active = true;
+                ++_sharedState->subscriberCount;
+                return index;
+            }
         }
-        ++_sharedState->subscriberCount;
+        throw std::runtime_error("shared-memory channel subscriber limit reached");
     }
 
-    void removeSubscriber() noexcept {
+    void removeSubscriber(SubscriberId id) noexcept {
         try {
             MutexLock lock(_sharedState->mutex, _sharedState->condition);
-            if (_sharedState->subscriberCount > 0) {
+            if (id < _sharedState->subscribers.size() && _sharedState->subscribers[id].active) {
+                _sharedState->subscribers[id].active = false;
                 --_sharedState->subscriberCount;
                 if (_sharedState->subscriberCount == 0) {
-                    while (_sharedState->ringBuffer.pop().has_value()) {
-                    }
+                    _sharedState->writeIndex = 0;
                 }
+                pthread_cond_broadcast(&_sharedState->condition);
             }
         } catch (const std::exception&) {
         }
@@ -159,58 +195,52 @@ public:
     bool pushIfSubscribed(const T& item) {
         MutexLock lock(_sharedState->mutex, _sharedState->condition);
         if (_sharedState->subscriberCount == 0) {
-            while (_sharedState->ringBuffer.pop().has_value()) {
-            }
+            _sharedState->writeIndex = 0;
             return true;
         }
-        const bool pushed = _sharedState->ringBuffer.push(item);
-        if (pushed) {
-            const int signalError = pthread_cond_signal(&_sharedState->condition);
-            if (signalError != 0) {
-                throw std::system_error(signalError, std::generic_category(), "pthread_cond_signal failed");
-            }
-        }
-        return pushed;
+        return pushLocked(item);
     }
 
-    // Ring buffer API delegates
+    // Shared-buffer operations
     bool push(const T& item) {
         MutexLock lock(_sharedState->mutex, _sharedState->condition);
-        const bool pushed = _sharedState->ringBuffer.push(item);
-        if (pushed) {
-            const int signalError = pthread_cond_signal(&_sharedState->condition);
-            if (signalError != 0) {
-                throw std::system_error(signalError, std::generic_category(), "pthread_cond_signal failed");
-            }
+        return pushLocked(item);
+    }
+
+    std::optional<T> pop(SubscriberId id) {
+        MutexLock lock(_sharedState->mutex, _sharedState->condition);
+        auto& subscriber = checkedSubscriber(id);
+        if (subscriber.readIndex == _sharedState->writeIndex) {
+            return std::nullopt;
         }
-        return pushed;
+        const T item = _sharedState->buffer[subscriber.readIndex & (Capacity - 1)];
+        ++subscriber.readIndex;
+        return item;
     }
 
-    std::optional<T> pop() {
+    std::optional<T> waitPop(SubscriberId id) {
         MutexLock lock(_sharedState->mutex, _sharedState->condition);
-        return _sharedState->ringBuffer.pop();
-    }
-
-    std::optional<T> waitPop() {
-        MutexLock lock(_sharedState->mutex, _sharedState->condition);
-        while (_sharedState->ringBuffer.empty()) {
+        auto& subscriber = checkedSubscriber(id);
+        while (subscriber.readIndex == _sharedState->writeIndex) {
             const int waitError = lock.wait(_sharedState->condition);
             if (waitError != 0) {
                 throw std::system_error(waitError, std::generic_category(), "pthread_cond_wait failed");
             }
+            checkedSubscriber(id);
         }
-
-        return _sharedState->ringBuffer.pop();
+        const T item = _sharedState->buffer[subscriber.readIndex & (Capacity - 1)];
+        ++subscriber.readIndex;
+        return item;
     }
 
-    bool empty() const {
+    bool empty(SubscriberId id) const {
         MutexLock lock(_sharedState->mutex, _sharedState->condition);
-        return _sharedState->ringBuffer.empty();
+        return checkedSubscriber(id).readIndex == _sharedState->writeIndex;
     }
 
-    std::uint64_t size() const {
+    std::uint64_t size(SubscriberId id) const {
         MutexLock lock(_sharedState->mutex, _sharedState->condition);
-        return _sharedState->ringBuffer.size();
+        return _sharedState->writeIndex - checkedSubscriber(id).readIndex;
     }
 
     constexpr std::uint64_t capacity() const {
@@ -259,12 +289,44 @@ private:
     };
 
     struct SharedState {
+        struct SubscriberState {
+            std::uint64_t readIndex = 0;
+            bool active = false;
+        };
+
         SharedMemoryHeader header;
-        SpscRingBuffer<T, Capacity> ringBuffer;
+        std::array<T, Capacity> buffer;
+        std::uint64_t writeIndex;
+        std::array<SubscriberState, maxChannelSubscribers> subscribers;
         std::uint64_t subscriberCount;
         pthread_mutex_t mutex;
         pthread_cond_t condition;
     };
+
+    auto& checkedSubscriber(SubscriberId id) const {
+        if (id >= _sharedState->subscribers.size() || !_sharedState->subscribers[id].active) {
+            throw std::invalid_argument("shared-memory channel subscriber is not active");
+        }
+        return _sharedState->subscribers[id];
+    }
+
+    bool pushLocked(const T& item) {
+        if (_sharedState->subscriberCount == 0) {
+            return false;
+        }
+        for (const auto& subscriber : _sharedState->subscribers) {
+            if (subscriber.active && _sharedState->writeIndex - subscriber.readIndex >= Capacity) {
+                return false;
+            }
+        }
+        _sharedState->buffer[_sharedState->writeIndex & (Capacity - 1)] = item;
+        ++_sharedState->writeIndex;
+        const int signalError = pthread_cond_broadcast(&_sharedState->condition);
+        if (signalError != 0) {
+            throw std::system_error(signalError, std::generic_category(), "pthread_cond_broadcast failed");
+        }
+        return true;
+    }
 
     static std::uint64_t processStartTime(pid_t processId) {
         std::ifstream statFile("/proc/" + std::to_string(processId) + "/stat");
@@ -310,7 +372,7 @@ private:
 
         const auto& header = *static_cast<const SharedMemoryHeader*>(mapped);
         const bool validHeader = header.magic == sharedMemoryMagic
-            && header.version == sharedMemoryVersion
+            && isRecognizedSharedMemoryVersion(header.version)
             && header.headerSize == sizeof(SharedMemoryHeader)
             && header.initializationState.load(std::memory_order_acquire) == sharedMemoryReady
             && header.mappedSize == static_cast<std::uint64_t>(fileStatus.st_size);

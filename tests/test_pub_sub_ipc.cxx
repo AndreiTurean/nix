@@ -181,15 +181,24 @@ int main(int argc, char** argv) {
 
         for (std::uint64_t sequence = 0; sequence < 4; ++sequence) {
             assert(publisher->publish(TestMessage{sequence, static_cast<std::int32_t>(sequence)}));
+        }
 
-            const auto received = sequence % 2 == 0
-                ? firstSubscriber->receive()
-                : secondSubscriber->receive();
-            const auto duplicate = sequence % 2 == 0
-                ? secondSubscriber->receive()
-                : firstSubscriber->receive();
-            assert(received.has_value() && received->sequenceId == sequence);
-            assert(!duplicate.has_value());
+        for (std::uint64_t sequence = 0; sequence < 4; ++sequence) {
+            const auto firstReceived = firstSubscriber->receive();
+            const auto secondReceived = secondSubscriber->receive();
+            assert(firstReceived.has_value() && firstReceived->sequenceId == sequence);
+            assert(secondReceived.has_value() && secondReceived->sequenceId == sequence);
+        }
+
+        for (std::uint64_t sequence = 4; sequence < 4 + sharedQueueCapacity; ++sequence) {
+            assert(publisher->publish(TestMessage{sequence, static_cast<std::int32_t>(sequence)}));
+        }
+        assert(!publisher->publish(TestMessage{99, 99}));
+        for (std::uint64_t sequence = 4; sequence < 4 + sharedQueueCapacity; ++sequence) {
+            const auto firstReceived = firstSubscriber->receive();
+            const auto secondReceived = secondSubscriber->receive();
+            assert(firstReceived.has_value() && firstReceived->sequenceId == sequence);
+            assert(secondReceived.has_value() && secondReceived->sequenceId == sequence);
         }
     }
 

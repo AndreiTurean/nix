@@ -5,7 +5,7 @@ A **C++20** Inter-Process Communication (IPC) library that uses POSIX shared mem
 ## Architecture & Core Components
 
 - **`SpscRingBuffer`**: A fixed-size, lock-free Single-Producer Single-Consumer ring-buffer implementation using atomic operations with acquire-release semantics and cache-line alignment (`alignas(64)`) to reduce false sharing. These properties describe the ring when used directly, not end-to-end channel operations.
-- **`ShmChannel`**: RAII wrapper managing POSIX shared memory segments. Its queue operations are serialized by a robust, process-shared mutex. This allows multiple publishers and subscribers to safely access the queue concurrently, but channel operations are lock-based, not lock-free; `waitPop()` also blocks while the queue is empty.
+- **`ShmChannel`**: RAII wrapper managing POSIX shared memory segments. Its operations are serialized by a robust, process-shared mutex. Messages are stored once and tracked with independent cursors, so every active subscriber can receive each message. Channel operations are lock-based, not lock-free; `waitPop()` also blocks while that subscriber has no message.
 - **`Publisher` & `Subscriber`**: Strongly-typed endpoints bound to named topics.
 - **`Node`**: Central factory context managing endpoint creation and system handles.
 - **`nix-daemon`**: Required Unix-domain-socket registry for active nodes and their publisher/subscriber endpoints. It logs node lifecycle, registrations, and discovery queries. It handles control-plane metadata only; message payloads travel directly through shared memory.
@@ -23,7 +23,7 @@ Each channel also records a message type fingerprint based on its compiler type 
 
 Subscriber endpoint lifetimes are tracked in shared memory, so publishing does not contact the daemon. If no subscriber is active, the publish call succeeds but discards the message and any queued backlog instead of retaining stale data for a future subscriber. While subscribers are active, normal bounded-queue backpressure applies; publishers can retry when the ring is full. Endpoint registration and discovery remain daemon control-plane operations.
 
-Delivery is queue-style: all subscribers to a topic consume from the same bounded queue, so each queued message is received by at most one subscriber. Multiple subscribers compete to consume messages; they do not each receive a copy. A push to a full queue fails, and publishing through the subscriber-aware path with no active subscribers discards queued data instead of retaining it. Applications that need broadcast delivery must use a separate future broadcast mode; no broadcast mode is currently available.
+Delivery is per-subscriber: each active subscriber has an independent cursor over messages in the topic's bounded shared-memory buffer, so every subscriber can receive every published message once. Messages are stored once, not copied into a separate queue per subscriber. Publishing returns `false` when the buffer is full for any active subscriber, applying backpressure rather than overwriting unread messages. Publishing with no active subscribers succeeds and discards the message and any stale backlog. A channel supports up to 64 simultaneous subscribers.
 
 The `examples/versioned_message.cxx` example demonstrates a custom message and a `nix::SharedTypeFingerprint<T>` specialization. Increment the explicit fingerprint whenever fields are added, removed, reordered, or change meaning or representation; producers and subscribers must use the same schema version.
 

@@ -16,25 +16,25 @@ This is the transport boundary used by `Publisher` and `Subscriber`; it is not t
 | `ShmMode::Open` | Opens and validates an existing object without taking ownership of unlinking its name. |
 | `ShmChannel<T, Capacity>` | Local mapping and channel operations over one shared state. |
 
-The shared state consists of a `SharedMemoryHeader`, `SpscRingBuffer<T, Capacity>`, active subscriber count, robust process-shared mutex, and process-shared condition variable.
+The shared state consists of a `SharedMemoryHeader`, one fixed-capacity array of message slots, a write index, up to 64 per-subscriber read cursors, a robust process-shared mutex, and a process-shared condition variable.
 
 ## Operations
 
 | Operation | Behavior |
 | --- | --- |
-| `push(item)` | Pushes directly into the queue; returns `false` if full. |
-| `pushIfSubscribed(item)` | Discards pending data and returns success if no subscribers are active; otherwise pushes and signals a waiter. |
-| `pop()` | Nonblocking queue pop. |
-| `waitPop()` | Waits on the process-shared condition variable until an item is available, then pops. |
-| `addSubscriber()` / `removeSubscriber()` | Maintains the shared active count; removing the final subscriber clears pending data. |
-| `empty()` / `size()` / `capacity()` | Inspects the shared queue or its fixed capacity. |
-| `discardPending()` | Removes all queued items. |
+| `push(item)` | Stores one message for all active subscribers; returns `false` if there are no subscribers or any subscriber has reached capacity. |
+| `pushIfSubscribed(item)` | Discards pending data and returns success if no subscribers are active; otherwise stores a message for every subscriber or returns `false` if any subscriber is behind by capacity. |
+| `pop(id)` | Nonblocking read for the identified subscriber; each subscriber advances independently. |
+| `waitPop(id)` | Waits until a message is available for that subscriber, then reads it. |
+| `addSubscriber()` / `removeSubscriber(id)` | Allocates/releases a cursor; supports up to 64 simultaneous subscribers. |
+| `empty(id)` / `size(id)` / `capacity()` | Inspects one subscriber's unread message count or the fixed capacity. |
+| `discardPending()` | Advances all active subscriber cursors to the current write index. |
 
 ## Safety and Compatibility
 
 Opening validates the shared-memory magic, format version, ready state, capacity, element size, and `SharedTypeFingerprint<T>`. A mismatch is rejected rather than interpreting incompatible bytes as `T`.
 
-The ring buffer's native algorithm is SPSC. `ShmChannel` wraps each ring operation in a robust process-shared mutex, which permits multiple channel handles to use the same queue safely. This queue model still does not replicate messages to subscribers.
+All channel operations are serialized by a robust process-shared mutex. Each message is stored once; independent subscriber cursors ensure every active subscriber can read it once. Publishing is bounded by the slowest subscriber: it returns `false` rather than overwriting unread data when that subscriber reaches capacity. No active subscribers means the subscriber-aware publish path discards data and returns success.
 
 The channel is non-copyable and movable. Each handle owns its local file descriptor and mapping; only the shared state is common across processes. Creator-handle destruction unlinks the POSIX name, while existing mappings remain mapped until their own handles close.
 

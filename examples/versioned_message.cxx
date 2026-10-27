@@ -20,13 +20,14 @@ int main() {
     constexpr std::uint64_t capacity = 8;
 
     nix::ShmChannel<TelemetryV1, capacity> channel(channelName, nix::ShmMode::Create);
+    const auto subscriberId = channel.addSubscriber();
     const TelemetryV1 outgoing{1U, 21500};
     if (!channel.push(outgoing)) {
         std::cerr << "channel is full\n";
         return 1;
     }
 
-    const auto incoming = channel.pop();
+    const auto incoming = channel.pop(subscriberId);
     if (!incoming.has_value()) {
         std::cerr << "channel is empty\n";
         return 1;
