@@ -4,26 +4,26 @@ Source header: `nix/include/nix/subscriber.hxx`
 
 ## Scope
 
-`nix::Subscriber<T, Capacity>` is a typed consumer endpoint for one existing topic. It opens the topic's shared-memory channel, tracks itself as active, and exposes access to the shared queue. It does not own a private backlog or a per-subscriber cursor.
+`nix::Subscriber<T, Capacity>` is a typed consumer endpoint for one existing topic. It opens the topic's shared-memory channel, tracks itself as active, and owns a per-subscriber read cursor into the channel's shared message buffer. Payloads are stored once rather than copied into private backlogs.
 
 ## Public API
 
 | Member | Purpose |
 | --- | --- |
-| `receive()` | Nonblocking pop; returns `std::nullopt` if the shared queue is empty. |
+| `receive()` | Nonblocking read; returns `std::nullopt` if this subscriber has no unread message. |
 | `receiveBlocking()` | Waits for an item and returns the next popped message. |
-| `empty()` | Reports whether the shared queue currently has no messages. |
-| `size()` | Reports the current number of queued messages. |
+| `empty()` | Reports whether this subscriber has no unread messages. |
+| `size()` | Reports this subscriber's number of unread messages. |
 
-`empty()` and `size()` describe the channel shared by every subscriber, not a subscriber-local count.
+`empty()` and `size()` are specific to this subscriber's cursor.
 
 ## Delivery Model
 
-Subscribers on one topic compete to pop from the same queue. Each published message is consumed by at most one subscriber, depending on which receives it first. To deliver each message independently to multiple consumers, a separate broadcast abstraction would be required; this class does not implement that behavior.
+Each active subscriber can receive every published message once. Subscribers advance independently, and a slow subscriber does not cause messages to be silently skipped. The shared buffer applies backpressure when any subscriber has `Capacity` unread messages; `publish()` returns `false` until space is available. Up to 64 subscribers can be active on one channel.
 
 ## Lifecycle and Constraints
 
-Construction opens an existing channel and increments the shared active-subscriber count. Destruction decrements it and unregisters the endpoint. When the last subscriber is removed, pending queue entries are discarded by the channel.
+Construction opens an existing channel and allocates a shared cursor. Destruction releases it and unregisters the endpoint. When the last subscriber is removed, pending messages are discarded by the channel.
 
 `T` and `Capacity` must match the publisher's shared-memory layout and type fingerprint. `receiveBlocking()` can wait indefinitely if no message is published; the API currently has no timeout or cancellation parameter.
 

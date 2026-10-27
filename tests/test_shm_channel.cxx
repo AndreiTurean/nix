@@ -21,6 +21,7 @@ std::int32_t main() {
     {
         // 1. Create the shared memory channel (acts as Producer/Server)
         nix::ShmChannel<std::int32_t, testCapacity> producerChannel(testChannelName, nix::ShmMode::Create);
+        const auto subscriberId = producerChannel.addSubscriber();
 
         bool mismatchedTypeRejected = false;
         try {
@@ -30,30 +31,30 @@ std::int32_t main() {
         }
         assert(mismatchedTypeRejected);
 
-        assert(producerChannel.empty() == true);
-        assert(producerChannel.size() == 0);
+        assert(producerChannel.empty(subscriberId) == true);
+        assert(producerChannel.size(subscriberId) == 0);
         assert(producerChannel.capacity() == testCapacity);
 
         // 2. Push data into the channel
         assert(producerChannel.push(42) == true);
         assert(producerChannel.push(84) == true);
-        assert(producerChannel.size() == 2);
+        assert(producerChannel.size(subscriberId) == 2);
 
         {
             // 3. Open the SAME shared memory segment from another handle (acts as Consumer/Client)
             nix::ShmChannel<std::int32_t, testCapacity> consumerChannel(testChannelName, nix::ShmMode::Open);
 
-            assert(consumerChannel.empty() == false);
-            assert(consumerChannel.size() == 2);
+            assert(consumerChannel.empty(subscriberId) == false);
+            assert(consumerChannel.size(subscriberId) == 2);
 
             // 4. Pop data from the consumer side
-            auto val1 = consumerChannel.pop();
+            auto val1 = consumerChannel.pop(subscriberId);
             assert(val1.has_value() && *val1 == 42);
 
-            auto val2 = consumerChannel.pop();
+            auto val2 = consumerChannel.pop(subscriberId);
             assert(val2.has_value() && *val2 == 84);
 
-            assert(consumerChannel.empty() == true);
+            assert(consumerChannel.empty(subscriberId) == true);
 
             int readyPipe[2];
             assert(pipe(readyPipe) == 0);
@@ -67,7 +68,7 @@ std::int32_t main() {
                 if (write(readyPipe[1], &ready, sizeof(ready)) != sizeof(ready)) {
                     _exit(1);
                 }
-                const auto received = blockingConsumer.waitPop();
+                const auto received = blockingConsumer.waitPop(subscriberId);
                 _exit(received.has_value() && *received == 123 ? 0 : 2);
             }
 
@@ -87,9 +88,9 @@ std::int32_t main() {
         } // consumerChannel goes out of scope and detaches (munmap), but backing shm remains alive
 
         // 5. Verify the data pushed by the consumer is visible to the producer
-        auto val3 = producerChannel.pop();
+        auto val3 = producerChannel.pop(subscriberId);
         assert(val3.has_value() && *val3 == 999);
-        assert(producerChannel.empty() == true);
+        assert(producerChannel.empty(subscriberId) == true);
 
     } // producerChannel goes out of scope, unlinks (shm_unlink), and cleans up system resources
 
@@ -101,6 +102,7 @@ std::int32_t main() {
     shm_unlink(std::string(concurrentChannelName).c_str());
     {
         nix::ShmChannel<std::int32_t, concurrentCapacity> channel(concurrentChannelName, nix::ShmMode::Create);
+        const auto subscriberId = channel.addSubscriber();
         std::array<std::atomic<std::int32_t>, totalMessages> seen{};
         std::atomic<std::int32_t> receivedCount{0};
         std::array<std::thread, producerCount> producers;
@@ -122,7 +124,7 @@ std::int32_t main() {
             consumer = std::thread([&] {
                 nix::ShmChannel<std::int32_t, concurrentCapacity> consumerChannel(concurrentChannelName, nix::ShmMode::Open);
                 while (receivedCount.load(std::memory_order_relaxed) < totalMessages) {
-                    const auto message = consumerChannel.pop();
+                    const auto message = consumerChannel.pop(subscriberId);
                     if (message.has_value()) {
                         assert(*message >= 0 && *message < totalMessages);
                         seen[static_cast<std::size_t>(*message)].fetch_add(1, std::memory_order_relaxed);
@@ -143,7 +145,7 @@ std::int32_t main() {
         for (const auto& count : seen) {
             assert(count.load(std::memory_order_relaxed) == 1);
         }
-        assert(channel.empty());
+        assert(channel.empty(subscriberId));
     }
 
     std::cout << "ShmChannel IPC test passed successfully!" << '\n';

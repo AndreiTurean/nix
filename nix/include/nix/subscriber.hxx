@@ -10,42 +10,41 @@
 
 namespace nix {
 
-/// Subscribers on the same topic share one queue, so each message is consumed by
-/// one subscriber. A future broadcast mode would be separate and deliver an
-/// independent copy to every subscriber; it is not the current behavior.
+/// Each subscriber has an independent cursor over messages in the shared channel.
 template <typename T, std::uint64_t Capacity>
 class Subscriber {
 public:
     Subscriber(std::shared_ptr<DaemonClient> daemonClient, std::string_view topicName)
         : _daemonClient(std::move(daemonClient)), _topicName(topicName), _channel(topicName, ShmMode::Open) {
-        _channel.addSubscriber();
+        _subscriberId = _channel.addSubscriber();
     }
 
     ~Subscriber() {
-        _channel.removeSubscriber();
+        _channel.removeSubscriber(_subscriberId);
         _daemonClient->unregisterEndpoint(_topicName, typeid(T).name(), EndpointRole::Subscriber, Capacity);
     }
 
     std::optional<T> receive() {
-        return _channel.pop();
+        return _channel.pop(_subscriberId);
     }
 
     std::optional<T> receiveBlocking() {
-        return _channel.waitPop();
+        return _channel.waitPop(_subscriberId);
     }
 
     bool empty() const {
-        return _channel.empty();
+        return _channel.empty(_subscriberId);
     }
 
     std::uint64_t size() const {
-        return _channel.size();
+        return _channel.size(_subscriberId);
     }
 
 private:
     std::shared_ptr<DaemonClient> _daemonClient;
     std::string _topicName;
     ShmChannel<T, Capacity> _channel;
+    typename ShmChannel<T, Capacity>::SubscriberId _subscriberId = 0;
 };
 
 } // namespace nix

@@ -12,14 +12,14 @@ It creates the topic's shared-memory object in exclusive creator mode. A second 
 
 | Member | Purpose |
 | --- | --- |
-| `publish(const T&)` | Enqueues one message. Returns `false` when the bounded queue is full. |
+| `publish(const T&)` | Stores one message for each active subscriber. Returns `false` when any subscriber has no buffer capacity remaining. |
 | `capacity()` | Returns the compile-time channel capacity. |
 
 When no subscriber is active, publishing succeeds while the channel discards the new message and any stale queued backlog. This is a live-stream behavior, not persistent delivery.
 
 ## Delivery Model
 
-The topic has one shared queue. If multiple subscribers are attached, they compete to consume messages; one message is not copied to every subscriber. There is no broadcast mode in this API.
+Each active subscriber has an independent cursor over one shared bounded message buffer, so each can receive every published message once. The payload is stored once, not copied per subscriber. A slow subscriber applies backpressure to the publisher rather than losing unread data. With no active subscribers, the message and stale backlog are discarded while `publish()` returns success.
 
 ## Constraints and Lifecycle
 

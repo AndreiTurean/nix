@@ -7,7 +7,7 @@
 namespace nix {
 
 inline constexpr std::uint64_t sharedMemoryMagic = 0x4e495853484d3031ULL;
-inline constexpr std::uint32_t sharedMemoryVersion = 3U;
+inline constexpr std::uint32_t sharedMemoryVersion = 4U;
 inline constexpr std::uint32_t sharedMemoryInitializing = 0U;
 inline constexpr std::uint32_t sharedMemoryReady = 1U;
 

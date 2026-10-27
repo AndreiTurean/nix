@@ -14,7 +14,7 @@ flowchart LR
     subgraph shm["Shared-memory object for topic"]
         channel["ShmChannel shared state"]
         header["SharedMemoryHeader"]
-        queue["SpscRingBuffer&lt;T, Capacity&gt;"]
+        queue["Shared message slots + subscriber cursors"]
         header --- channel
         queue --- channel
     end
@@ -22,9 +22,9 @@ flowchart LR
         nodeB["Node"] --> sub1["Subscriber&lt;T, Capacity&gt;"]
         nodeC["Node"] --> sub2["Subscriber&lt;T, Capacity&gt;"]
     end
-    pub -->|"payloads: shared queue"| queue
-    sub1 -->|"pop"| queue
-    sub2 -->|"pop"| queue
+    pub -->|"payloads: shared slots"| queue
+    sub1 -->|"read with cursor 1"| queue
+    sub2 -->|"read with cursor 2"| queue
     nodeA -. "control requests" .-> clientA["DaemonClient"]
     nodeB -. "control requests" .-> clientB["DaemonClient"]
     nodeC -. "control requests" .-> clientC["DaemonClient"]
@@ -33,14 +33,14 @@ flowchart LR
     clientC -.-> daemon
 ```
 
-All subscribers for one topic open the same queue. Delivery is queue-style: each message is consumed by at most one subscriber, and subscribers compete for messages. There is no current broadcast mode. A future broadcast mode would be a separate communication model and would maintain independent delivery for every subscriber.
+All subscribers for one topic open the same bounded message buffer, with an independent read cursor per subscriber. Each active subscriber can receive every published message once; payloads are stored once. The slowest subscriber controls backpressure, and a publish fails rather than overwriting unread messages when that subscriber is at capacity. Channels support up to 64 simultaneous subscribers.
 
 ## Message Lifecycle
 
 1. An application constructs a `Node`, which opens a control connection through `DaemonClient`.
 2. `Node::createPublisher<T, Capacity>` creates the topic's shared-memory object and registers the publisher with the daemon.
 3. `Node::createSubscriber<T, Capacity>` opens the existing shared-memory object, increments its active subscriber count, and registers the endpoint.
-4. `Publisher::publish` writes to the bounded shared queue. `Subscriber::receive` removes one message; `receiveBlocking` waits until one is available.
+4. `Publisher::publish` writes once to the bounded shared buffer. Each `Subscriber::receive` advances only its own cursor; `receiveBlocking` waits until a message is available for that subscriber.
 5. Endpoint destruction unregisters it. The shared-memory creator unlinks the topic name when its channel is destroyed; existing mappings remain valid until their handles close.
 
 The publisher and subscriber must agree on the topic, message type, capacity, and type fingerprint. A subscriber rejects a shared-memory object with incompatible metadata.
@@ -51,9 +51,9 @@ The publisher and subscriber must agree on the topic, message type, capacity, an
 | --- | --- | --- |
 | `Node` | `node.hxx` | Application-facing factory and discovery context. Owns the node name and a shared `DaemonClient`; endpoint objects retain that client so their registration connection can outlive the `Node` wrapper. |
 | `Publisher<T, Capacity>` | `publisher.hxx` | Typed publishing endpoint for one topic. Owns a creator-mode `ShmChannel`; `publish` writes once to the topic queue. |
-| `Subscriber<T, Capacity>` | `subscriber.hxx` | Typed receiving endpoint for one topic. Owns an open-mode `ShmChannel`; exposes nonblocking and blocking receive operations and shared queue status. |
+| `Subscriber<T, Capacity>` | `subscriber.hxx` | Typed receiving endpoint for one topic. Owns an open-mode `ShmChannel` and an independent read cursor; exposes nonblocking and blocking receive operations and subscriber-local queue status. |
 | `ShmChannel<T, Capacity>` | `shm_channel.hxx` | Shared-memory transport and synchronization boundary. Maps one POSIX shared-memory object, validates its metadata, and serializes queue access using process-shared synchronization. Supports multiple publisher/subscriber handles through this synchronized channel API. |
-| `SpscRingBuffer<T, Capacity>` | `spsc_ring_buffer.hxx` | Fixed-size ring storage primitive. Its own lock-free contract is single-producer/single-consumer; `ShmChannel` guards it with a process-shared mutex to provide the endpoint-level multi-producer/multi-consumer behavior. |
+| `SpscRingBuffer<T, Capacity>` | `spsc_ring_buffer.hxx` | Separate fixed-size ring storage primitive. Its own lock-free contract is single-producer/single-consumer; `ShmChannel` uses its own shared slot array instead. |
 | `DaemonClient` | `daemon.hxx` | One node's Unix-domain-socket client for endpoint registration, unregistration, and discovery. It carries control metadata, not message payloads. |
 | `EndpointInfo` | `daemon.hxx` | Value record returned by discovery: node, topic, type identifier, role, and capacity. It is a snapshot of registry data, not a live endpoint handle. |
 | `EndpointRole` | `daemon.hxx` | Identifies a registered endpoint as `Publisher` or `Subscriber`. |
@@ -69,7 +69,7 @@ These are implementation details, not application-facing API:
 
 | Type | Scope |
 | --- | --- |
-| `ShmChannel<T, Capacity>::SharedState` | The mapped per-topic state: header, ring buffer, active subscriber count, robust process-shared mutex, and process-shared condition variable. It is shared by all mappings of that topic. |
+| `ShmChannel<T, Capacity>::SharedState` | The mapped per-topic state: header, fixed message-slot array, write index, per-subscriber read cursors, robust process-shared mutex, and process-shared condition variable. It is shared by all mappings of that topic. |
 | `ShmChannel<T, Capacity>::MutexLock` | RAII lock wrapper. Acquires the shared mutex, handles owner-death recovery, and releases the lock on scope exit. |
 | `ShmChannel<T, Capacity>::MmapDeleter` | `unique_ptr` deleter that unmaps the mapped shared-memory region when a local channel handle is destroyed. |
 
@@ -89,17 +89,17 @@ The payload type must be trivially copyable for safe shared-memory storage. `Cap
 
 ### `Subscriber<T, Capacity>`
 
-`receive()` is nonblocking and returns `std::nullopt` when the shared queue is empty. `receiveBlocking()` waits for a message. `empty()` and `size()` observe the shared queue, not a private subscriber backlog. Destroying a subscriber decrements the active subscriber count; when the last subscriber is removed, pending messages are discarded.
+`receive()` is nonblocking and returns `std::nullopt` when this subscriber has no unread messages. `receiveBlocking()` waits for a message. `empty()` and `size()` report this subscriber's unread messages. Destroying a subscriber releases its cursor; when the last subscriber is removed, pending messages are discarded.
 
-With more than one subscriber, whichever one pops a given message consumes it. The API does not associate messages with a specific subscriber and does not replicate them.
+Each active subscriber reads independently, so each can receive every published message once. If any subscriber reaches the buffer capacity, publishing returns `false` until a subscriber advances its cursor; unread messages are never overwritten.
 
 ### `ShmChannel<T, Capacity>` and `SpscRingBuffer<T, Capacity>`
 
-`ShmChannel` owns a local mapping and file descriptor and refers to a shared `SharedState`. Its process-shared robust mutex protects all ring operations and subscriber-count updates; its condition variable supports blocking reads. The shared header is checked on open for initialization state, version, capacity, element size, and type fingerprint. An invalid or incompatible mapping is rejected.
+`ShmChannel` owns a local mapping and file descriptor and refers to a shared `SharedState`. Its process-shared robust mutex protects message writes, cursor reads, and subscriber registration; its condition variable supports blocking reads. Up to 64 subscriber cursors are available per channel. The shared header is checked on open for initialization state, version, capacity, element size, and type fingerprint. An invalid or incompatible mapping is rejected.
 
 At the public endpoint layer, `Publisher` always creates the topic object with exclusive `ShmMode::Create`, while subscribers open it. A second public publisher cannot create the same live topic object. The lower-level `ShmChannel` can open an existing object and exposes `push`, but composing extra publisher handles directly is a lower-level use of the transport API.
 
-`SpscRingBuffer` stores the fixed-capacity slots using atomic head and tail indexes and acquire-release ordering. Used directly, it requires exactly one producer and one consumer. Within `ShmChannel`, external synchronization is what allows multiple handles to safely interact with the same ring. The ring itself does not implement broadcast or per-subscriber cursors.
+`SpscRingBuffer` remains a standalone lock-free storage primitive with one producer and one consumer. `ShmChannel` does not use it: the channel uses fixed shared slots and per-subscriber cursors under its process-shared mutex to provide independent delivery.
 
 ### `DaemonClient`, `EndpointRole`, and `EndpointInfo`
 
@@ -136,11 +136,11 @@ These types support the Python/native boundary; they are not required for ordina
 | Creating endpoints and initiating discovery | `Node` |
 | Typed endpoint behavior and endpoint registration lifetime | `Publisher` / `Subscriber` |
 | Payload queue, shared memory mapping, synchronization, and active subscriber count | `ShmChannel` |
-| Fixed-capacity slot storage | `SpscRingBuffer` |
+| Fixed-capacity slot storage | `ShmChannel` shared message-slot array |
 | Node and endpoint registry metadata | `DaemonClient` and `nix-daemon` |
 | Cross-language envelope framing and validation | Serialized-message helpers |
 
-The daemon is not a broker for application messages, the queue does not provide durable delivery, and current delivery is not broadcast. Choose another transport or add a separately specified broadcast abstraction when those guarantees are required.
+The daemon is not a broker for application messages, and the shared buffer does not provide durable delivery. Delivery is guaranteed only while subscribers remain active and publishers successfully handle backpressure; messages with no active subscribers are discarded.
 
 ## Header References
 
