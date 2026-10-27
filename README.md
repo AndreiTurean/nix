@@ -15,11 +15,15 @@ A high-performance, lock-free Inter-Process Communication (IPC) library built in
 
 The project is split by role: `nix/include/nix` and `nix/src` contain the reusable library, while `nix-daemon/src` contains the daemon and shared-memory cleanup executables. Tests and runnable examples remain in `tests` and `examples`.
 
+For class responsibilities, ownership/lifetime boundaries, and architecture diagrams, see [the library architecture guide](docs/library-architecture.md).
+
 Stale shared-memory channels can be inspected with `build/default/nix/bin/nix-cleanup-shm`. It reports stale Nix-owned segments by default; pass `--apply` to unlink them. The tool validates each segment's versioned header and owner PID/start-time, and ignores unrelated or partially initialized shared-memory objects. Channel mutexes are process-shared and robust, so surviving participants recover a lock held by a process that exited unexpectedly.
 
 Each channel also records a message type fingerprint based on its compiler type signature, size, and alignment. Opening a channel with a different type or incompatible size/alignment is rejected. C++ cannot reflect over aggregate fields to detect every same-size schema edit, so applications that evolve message layouts should specialize `nix::SharedTypeFingerprint<T>` with an explicit schema/version value and change it whenever the wire layout changes. Payloads must be trivially copyable.
 
 Subscriber endpoint lifetimes are tracked in shared memory, so publishing does not contact the daemon. If no subscriber is active, the publish call succeeds but discards the message and any queued backlog instead of retaining stale data for a future subscriber. While subscribers are active, normal bounded-queue backpressure applies; publishers can retry when the ring is full. Endpoint registration and discovery remain daemon control-plane operations.
+
+Delivery is queue-style: all subscribers to a topic consume from the same queue, so each message is received by at most one subscriber. Multiple subscribers compete to consume messages; they do not each receive a copy. Applications that need broadcast delivery must use a separate future broadcast mode, which would provide an independent copy to every subscriber. No broadcast mode is currently available.
 
 The `examples/versioned_message.cxx` example demonstrates a custom message and a `nix::SharedTypeFingerprint<T>` specialization. Increment the explicit fingerprint whenever fields are added, removed, reordered, or change meaning or representation; producers and subscribers must use the same schema version.
 

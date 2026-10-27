@@ -168,6 +168,32 @@ int main(int argc, char** argv) {
     }
 
     {
+        constexpr std::string_view sharedQueueTopic = "/nix_pub_sub_shared_queue_topic";
+        constexpr std::uint64_t sharedQueueCapacity = 8;
+        shm_unlink(std::string(sharedQueueTopic).c_str());
+
+        nix::Node producerNode("shared_queue_producer");
+        nix::Node firstSubscriberNode("shared_queue_consumer_one");
+        nix::Node secondSubscriberNode("shared_queue_consumer_two");
+        auto publisher = producerNode.createPublisher<TestMessage, sharedQueueCapacity>(sharedQueueTopic);
+        auto firstSubscriber = firstSubscriberNode.createSubscriber<TestMessage, sharedQueueCapacity>(sharedQueueTopic);
+        auto secondSubscriber = secondSubscriberNode.createSubscriber<TestMessage, sharedQueueCapacity>(sharedQueueTopic);
+
+        for (std::uint64_t sequence = 0; sequence < 4; ++sequence) {
+            assert(publisher->publish(TestMessage{sequence, static_cast<std::int32_t>(sequence)}));
+
+            const auto received = sequence % 2 == 0
+                ? firstSubscriber->receive()
+                : secondSubscriber->receive();
+            const auto duplicate = sequence % 2 == 0
+                ? secondSubscriber->receive()
+                : firstSubscriber->receive();
+            assert(received.has_value() && received->sequenceId == sequence);
+            assert(!duplicate.has_value());
+        }
+    }
+
+    {
         DaemonProcess disconnectedDaemon(argv[1], "-disconnected");
         nix::Node producerNode("disconnected_producer");
         nix::Node subscriberNode("disconnected_consumer");

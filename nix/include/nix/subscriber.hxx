@@ -10,6 +10,9 @@
 
 namespace nix {
 
+/// Subscribers on the same topic share one queue, so each message is consumed by
+/// one subscriber. A future broadcast mode would be separate and deliver an
+/// independent copy to every subscriber; it is not the current behavior.
 template <typename T, std::uint64_t Capacity>
 class Subscriber {
 public:
