@@ -141,3 +141,19 @@ These types support the Python/native boundary; they are not required for ordina
 | Cross-language envelope framing and validation | Serialized-message helpers |
 
 The daemon is not a broker for application messages, the queue does not provide durable delivery, and current delivery is not broadcast. Choose another transport or add a separately specified broadcast abstraction when those guarantees are required.
+
+## Header References
+
+Each public header has a focused reference describing its scope and API:
+
+| Header | Guide |
+| --- | --- |
+| `nix.hxx` | [Umbrella header](headers/nix.md) |
+| `node.hxx` | [Node](headers/node.md) |
+| `publisher.hxx` | [Publisher](headers/publisher.md) |
+| `subscriber.hxx` | [Subscriber](headers/subscriber.md) |
+| `shm_channel.hxx` | [Shared-memory channel](headers/shm_channel.md) |
+| `spsc_ring_buffer.hxx` | [SPSC ring buffer](headers/spsc_ring_buffer.md) |
+| `daemon.hxx` | [Daemon client and discovery types](headers/daemon.md) |
+| `shared_memory_header.hxx` | [Shared-memory metadata and type fingerprints](headers/shared_memory_header.md) |
+| `serialized_message.hxx` | [Serialized message format](headers/serialized_message.md) |
