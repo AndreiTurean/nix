@@ -54,9 +54,9 @@ set_target_properties(nix_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(nix::core ALIAS nix_core)
 
 target_include_directories(nix_core
-  PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/nix/include>
-      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/nix/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(nix_core PUBLIC Threads::Threads)
 
@@ -90,16 +90,16 @@ apply_nix_warnings(versioned_message_example)
 enable_testing()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  # Add the test executable
-  add_executable(test_spsc_ring_buffer tests/test_spsc_ring_buffer.cxx)
-  apply_nix_warnings(test_spsc_ring_buffer)
-  target_link_libraries(test_spsc_ring_buffer PRIVATE nix::core)
-  add_test(NAME SpscRingBufferBasicTest COMMAND test_spsc_ring_buffer)
+    # Add the test executable
+    add_executable(test_spsc_ring_buffer tests/test_spsc_ring_buffer.cxx)
+    apply_nix_warnings(test_spsc_ring_buffer)
+    target_link_libraries(test_spsc_ring_buffer PRIVATE nix::core)
+    add_test(NAME SpscRingBufferBasicTest COMMAND test_spsc_ring_buffer)
 
-  add_executable(test_shm_channel tests/test_shm_channel.cxx)
-  apply_nix_warnings(test_shm_channel)
-  target_link_libraries(test_shm_channel PRIVATE nix::core)
-  add_test(NAME ShmChannelTest COMMAND test_shm_channel)
+    add_executable(test_shm_channel tests/test_shm_channel.cxx)
+    apply_nix_warnings(test_shm_channel)
+    target_link_libraries(test_shm_channel PRIVATE nix::core)
+    add_test(NAME ShmChannelTest COMMAND test_shm_channel)
 
     add_executable(test_serialized_message tests/test_serialized_message.cxx)
     apply_nix_warnings(test_serialized_message)
@@ -111,9 +111,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_link_libraries(test_shm_cleanup PRIVATE nix::core)
     add_test(NAME ShmCleanupTest COMMAND test_shm_cleanup $<TARGET_FILE:nix-cleanup-shm>)
 
-  add_executable(test_pub_sub_ipc tests/test_pub_sub_ipc.cxx)
-  apply_nix_warnings(test_pub_sub_ipc)
-  target_link_libraries(test_pub_sub_ipc PRIVATE nix::core)
+    add_executable(test_pub_sub_ipc tests/test_pub_sub_ipc.cxx)
+    apply_nix_warnings(test_pub_sub_ipc)
+    target_link_libraries(test_pub_sub_ipc PRIVATE nix::core)
     add_test(NAME PublisherSubcriberIpcTest COMMAND test_pub_sub_ipc $<TARGET_FILE:nix-daemon>)
 
     add_executable(python_interop_peer tests/python_interop_peer.cxx)
