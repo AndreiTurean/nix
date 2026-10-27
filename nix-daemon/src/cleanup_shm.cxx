@@ -58,7 +58,7 @@ bool processIsAlive(const nix::SharedMemoryHeader& header) {
 bool isNixChannel(const struct stat& fileStatus, const nix::SharedMemoryHeader& header) {
     return fileStatus.st_size >= static_cast<off_t>(sizeof(nix::SharedMemoryHeader))
         && header.magic == nix::sharedMemoryMagic
-        && header.version == nix::sharedMemoryVersion
+        && nix::isRecognizedSharedMemoryVersion(header.version)
         && header.headerSize == sizeof(nix::SharedMemoryHeader)
         && header.initializationState.load(std::memory_order_acquire) == nix::sharedMemoryReady
         && header.mappedSize == static_cast<std::uint64_t>(fileStatus.st_size);

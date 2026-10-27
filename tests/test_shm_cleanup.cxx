@@ -13,8 +13,10 @@ int main(int argc, char** argv) {
     assert(argc == 2);
     const std::string channelName = "/nix_stale_cleanup_test_" + std::to_string(static_cast<long long>(getpid()));
     const std::string unrelatedName = channelName + "_unmarked";
+    const std::string liveName = channelName + "_live";
     shm_unlink(channelName.c_str());
     shm_unlink(unrelatedName.c_str());
+    shm_unlink(liveName.c_str());
 
     const int unrelatedDescriptor = shm_open(unrelatedName.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
     assert(unrelatedDescriptor != -1);
@@ -30,6 +32,18 @@ int main(int argc, char** argv) {
     int ownerStatus = 0;
     assert(waitpid(owner, &ownerStatus, 0) == owner);
     assert(WIFEXITED(ownerStatus) && WEXITSTATUS(ownerStatus) == 0);
+
+    const int legacyDescriptor = shm_open(channelName.c_str(), O_RDWR, 0);
+    assert(legacyDescriptor != -1);
+    void* legacyMapping = mmap(nullptr, sizeof(nix::SharedMemoryHeader), PROT_READ | PROT_WRITE,
+        MAP_SHARED, legacyDescriptor, 0);
+    assert(legacyMapping != MAP_FAILED);
+    auto& legacyHeader = *static_cast<nix::SharedMemoryHeader*>(legacyMapping);
+    legacyHeader.version = nix::sharedMemoryVersion - 1U;
+    assert(munmap(legacyMapping, sizeof(nix::SharedMemoryHeader)) == 0);
+    close(legacyDescriptor);
+
+    nix::ShmChannel<std::uint64_t, 8> liveChannel(liveName, nix::ShmMode::Create);
 
     const pid_t cleanup = fork();
     assert(cleanup != -1);
@@ -49,6 +63,10 @@ int main(int argc, char** argv) {
     assert(preservedDescriptor != -1);
     close(preservedDescriptor);
     assert(shm_unlink(unrelatedName.c_str()) == 0);
+
+    const int liveDescriptor = shm_open(liveName.c_str(), O_RDWR, 0);
+    assert(liveDescriptor != -1);
+    close(liveDescriptor);
 
     return 0;
 }

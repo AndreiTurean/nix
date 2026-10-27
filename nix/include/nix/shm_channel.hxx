@@ -372,7 +372,7 @@ private:
 
         const auto& header = *static_cast<const SharedMemoryHeader*>(mapped);
         const bool validHeader = header.magic == sharedMemoryMagic
-            && header.version == sharedMemoryVersion
+            && isRecognizedSharedMemoryVersion(header.version)
             && header.headerSize == sizeof(SharedMemoryHeader)
             && header.initializationState.load(std::memory_order_acquire) == sharedMemoryReady
             && header.mappedSize == static_cast<std::uint64_t>(fileStatus.st_size);
