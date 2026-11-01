@@ -46,14 +46,17 @@ cd build/default && ctest --output-on-failure
 
 ### QNX Cross-Build
 
-The `qnx-release` preset cross-compiles the C++ middleware and examples from a Linux host for QNX AArch64 using the active QNX SDP environment. It selects the `gcc_ntoaarch64le` toolchain variant and writes artifacts to `build/qnx-release-arm64`. Initialize the SDP environment in your shell first so `q++` and the QNX target libraries are available, then run:
+The `qnx-release` preset cross-compiles the C++ middleware, examples, and the QNX Screen/Vulkan daemon GUI from a Linux host for QNX AArch64 using the active QNX SDP environment. The GUI uses Dear ImGui from the `third_party/imgui` submodule. Initialize the submodule and the SDP environment first so the sources, `q++`, Screen, and Vulkan headers and libraries are available, then run:
 
 ```bash
+git submodule update --init --recursive
 cmake --preset qnx-release
 cmake --build --preset qnx-release
 ```
 
 This verifies the QNX build; the binaries must run on a compatible QNX target. The Python extension below is currently supported on Linux only.
+
+The GUI is built as `build/qnx-release-arm64/nix/bin/nix-daemon-gui`. Use its Refresh button to query the daemon and view registered publishers and subscribers.
 
 ### Counter Example
 
