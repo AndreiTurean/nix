@@ -240,12 +240,12 @@ void DaemonClient::setSniffTopic(std::string_view topicName) {
     }
 }
 
-void DaemonClient::publishSample(std::string_view topicName, std::string_view typeName,
+void DaemonClient::publishSample(std::string_view topicName, const std::type_info& type,
     std::string_view payload, std::uint64_t originalSize) noexcept {
     try {
         std::lock_guard<std::mutex> lock(_mutex);
         const std::string_view capturedPayload = payload.substr(0, maxSniffPayloadBytes);
-        sendLine(_socket, "SAMPLE\t" + encode(topicName) + "\t" + encode(typeName) + "\t"
+        sendLine(_socket, "SAMPLE\t" + encode(topicName) + "\t" + encode(type.name()) + "\t"
             + std::to_string(originalSize) + "\t" + encode(capturedPayload));
         static_cast<void>(readLine(_socket));
     } catch (const std::exception&) {

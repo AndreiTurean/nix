@@ -25,7 +25,7 @@ public:
         const bool published = _channel.pushIfSubscribed(message);
         if (published && _channel.sniffEnabled()) {
             const std::string_view payload(reinterpret_cast<const char*>(&message), sizeof(message));
-            _daemonClient->publishSample(_topicName, typeid(T).name(), payload, sizeof(message));
+            _daemonClient->publishSample(_topicName, typeid(T), payload, sizeof(message));
         }
         return published;
     }

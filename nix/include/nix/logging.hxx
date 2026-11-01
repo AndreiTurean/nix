@@ -15,6 +15,28 @@
 
 namespace nix::logging {
 
+enum class Level {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Fatal,
+};
+
+inline std::string_view levelName(Level level)
+{
+    switch (level) {
+    case Level::Trace: return "TRACE";
+    case Level::Debug: return "DEBUG";
+    case Level::Info: return "INFO";
+    case Level::Warn: return "WARN";
+    case Level::Error: return "ERROR";
+    case Level::Fatal: return "FATAL";
+    }
+    return "UNKNOWN";
+}
+
 struct Entry {
     std::string timestamp;
     std::string level;
@@ -120,7 +142,7 @@ void appendFormatted(std::ostringstream& output, std::string_view format,
 }
 
 template <typename... Arguments>
-void write(std::string_view level, std::string_view sourceFile, std::size_t sourceLine,
+void write(Level level, std::string_view sourceFile, std::size_t sourceLine,
     std::string_view format, Arguments&&... arguments)
 {
     std::ostringstream message;
@@ -140,19 +162,19 @@ void write(std::string_view level, std::string_view sourceFile, std::size_t sour
         ? sourceFile
         : sourceFile.substr(fileNameStart + 1U);
 
-    Manager::instance().record({timestamp, std::string(level), std::string(fileName),
+    Manager::instance().record({timestamp, std::string(levelName(level)), std::string(fileName),
         sourceLine, message.str(), 1U});
 }
 
 } // namespace nix::logging
 
-#define NIX_TRACE(...) ::nix::logging::write("TRACE", __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
-#define NIX_DEBUG(...) ::nix::logging::write("DEBUG", __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
-#define NIX_INFO(...) ::nix::logging::write("INFO", __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
-#define NIX_WARN(...) ::nix::logging::write("WARN", __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
+#define NIX_TRACE(...) ::nix::logging::write(::nix::logging::Level::Trace, __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
+#define NIX_DEBUG(...) ::nix::logging::write(::nix::logging::Level::Debug, __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
+#define NIX_INFO(...) ::nix::logging::write(::nix::logging::Level::Info, __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
+#define NIX_WARN(...) ::nix::logging::write(::nix::logging::Level::Warn, __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
 #define NIX_WARNING(...) NIX_WARN(__VA_ARGS__)
-#define NIX_ERROR(...) ::nix::logging::write("ERROR", __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
-#define NIX_FATAL(...) ::nix::logging::write("FATAL", __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
+#define NIX_ERROR(...) ::nix::logging::write(::nix::logging::Level::Error, __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
+#define NIX_FATAL(...) ::nix::logging::write(::nix::logging::Level::Fatal, __FILE__, static_cast<std::size_t>(__LINE__), __VA_ARGS__)
 
 #ifndef LOG_TRACE
 #define LOG_TRACE(...) NIX_TRACE(__VA_ARGS__)

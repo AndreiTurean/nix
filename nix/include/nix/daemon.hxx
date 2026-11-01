@@ -4,6 +4,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <typeinfo>
 #include <vector>
 
 namespace nix {
@@ -46,7 +47,7 @@ public:
         EndpointRole role, std::uint64_t capacity) noexcept;
     std::vector<EndpointInfo> discover(std::string_view topicName = {});
     void setSniffTopic(std::string_view topicName);
-    void publishSample(std::string_view topicName, std::string_view typeName,
+    void publishSample(std::string_view topicName, const std::type_info& type,
         std::string_view payload, std::uint64_t originalSize) noexcept;
     std::vector<TopicSample> sniff(std::string_view topicName = {});
 
