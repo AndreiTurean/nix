@@ -8,7 +8,7 @@ A **C++20** inter-process communication middleware for **Linux and QNX**, using 
 - **`ShmChannel`**: RAII wrapper managing POSIX shared memory segments. Its operations are serialized by a robust, process-shared mutex. Messages are stored once and tracked with independent cursors, so every active subscriber can receive each message. Channel operations are lock-based, not lock-free; `waitPop()` also blocks while that subscriber has no message.
 - **`Publisher` & `Subscriber`**: Strongly-typed endpoints bound to named topics.
 - **`Node`**: Central factory context managing endpoint creation and system handles.
-- **`nix-daemon`**: Required Unix-domain-socket registry for active nodes and their publisher/subscriber endpoints. It logs node lifecycle, registrations, and discovery queries. It handles control-plane metadata only; message payloads travel directly through shared memory.
+- **`nix-daemon`**: Required Unix-domain-socket registry for active nodes and their publisher/subscriber endpoints. It logs node lifecycle, registrations, and discovery queries. Message payloads normally travel directly through shared memory; an opt-in bounded debug tap makes recent raw payload samples available to the GUI.
 - **`nix-cleanup-shm`**: Validates Nix shared-memory metadata and reports channels whose owner process has exited. It is report-only by default; pass `--apply` to unlink stale channel names.
 
 ## Getting Started
@@ -57,6 +57,8 @@ cmake --build --preset qnx-release
 This verifies the QNX build; the binaries must run on a compatible QNX target. The Python extension below is currently supported on Linux only.
 
 The GUI is built as `build/qnx-release-arm64/nix/bin/nix-daemon-gui`. Use its Refresh button to query the daemon and view registered publishers and subscribers.
+
+For payload inspection, open the GUI's Sniffer tab, refresh the endpoint list, select a publisher topic, and choose Start. Stop ends capture; the latest captured sample remains available until another capture starts. The GUI displays the raw bytes in hex without interpreting the C++ payload. Samples are capped at 256 bytes. Publishers only forward bytes while the selected topic is armed by the daemon.
 
 ### Counter Example
 

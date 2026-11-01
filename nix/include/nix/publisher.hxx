@@ -22,7 +22,12 @@ public:
 
     /// Publishes once to the shared channel; each active subscriber can receive the message once.
     bool publish(const T& message) {
-        return _channel.pushIfSubscribed(message);
+        const bool published = _channel.pushIfSubscribed(message);
+        if (published && _channel.sniffEnabled()) {
+            const std::string_view payload(reinterpret_cast<const char*>(&message), sizeof(message));
+            _daemonClient->publishSample(_topicName, typeid(T), payload, sizeof(message));
+        }
+        return published;
     }
 
     std::uint64_t capacity() const {

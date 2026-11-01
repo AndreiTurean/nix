@@ -13,6 +13,7 @@ namespace nix {
 namespace {
 
 constexpr std::size_t maxLineLength = std::size_t{1024U} * 1024U;
+constexpr std::size_t maxSniffPayloadBytes = 256U;
 constexpr char hexDigits[] = "0123456789abcdef";
 
 std::string encode(std::string_view value) {
@@ -226,6 +227,52 @@ std::vector<EndpointInfo> DaemonClient::discover(std::string_view topicName) {
         }
         endpoints.push_back(EndpointInfo{
             decode(fields[2]), decode(fields[3]), decode(fields[4]), role, parseCapacity(fields[5])
+        });
+    }
+}
+
+void DaemonClient::setSniffTopic(std::string_view topicName) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    sendLine(_socket, "SNIFF_SET\t" + (topicName.empty() ? std::string("-") : encode(topicName)));
+    const std::string response = readLine(_socket);
+    if (response != "OK") {
+        throw std::runtime_error("nix-daemon rejected sniff topic: " + response);
+    }
+}
+
+void DaemonClient::publishSample(std::string_view topicName, const std::type_info& type,
+    std::string_view payload, std::uint64_t originalSize) noexcept {
+    try {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const std::string_view capturedPayload = payload.substr(0, maxSniffPayloadBytes);
+        sendLine(_socket, "SAMPLE\t" + encode(topicName) + "\t" + encode(type.name()) + "\t"
+            + std::to_string(originalSize) + "\t" + encode(capturedPayload));
+        static_cast<void>(readLine(_socket));
+    } catch (const std::exception&) {
+    }
+}
+
+std::vector<TopicSample> DaemonClient::sniff(std::string_view topicName) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    sendLine(_socket, "SNIFF\t" + (topicName.empty() ? std::string("-") : encode(topicName)));
+
+    std::vector<TopicSample> samples;
+    for (;;) {
+        const std::string response = readLine(_socket);
+        if (response == "END") {
+            return samples;
+        }
+        const auto fields = split(response);
+        if (fields.size() != 7U || fields[0] != "SAMPLE_ENTRY") {
+            throw std::runtime_error("invalid sniff response from nix-daemon");
+        }
+        std::string payload = decode(fields[6]);
+        if (payload.size() > maxSniffPayloadBytes) {
+            throw std::runtime_error("sniff payload exceeded the maximum size");
+        }
+        samples.push_back(TopicSample{
+            decode(fields[1]), decode(fields[2]), decode(fields[3]),
+            parseCapacity(fields[5]), parseCapacity(fields[4]), std::move(payload)
         });
     }
 }

@@ -20,12 +20,16 @@
 #include "imgui_impl_qnx.h"
 #include "imgui_impl_vulkan.h"
 #include <nix/daemon.hxx>
+#include <nix/logging.hxx>
+#include <algorithm>
 #include <exception>
-#include <stdio.h>          // printf, fprintf
+#include <cfloat>
+#include <memory>
 #include <stdlib.h>         // abort
 #include <errno.h>
 #include <string.h>
 #include <string>
+#include <string_view>
 #include <sys/keycodes.h>
 #include <time.h>
 #include <screen/screen.h>
@@ -61,7 +65,7 @@ static void check_vk_result(VkResult err)
 {
     if (err == VK_SUCCESS)
         return;
-    fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
+    NIX_ERROR("[vulkan] VkResult = {}", err);
     if (err < 0)
         abort();
 }
@@ -70,7 +74,7 @@ static void check_vk_result(VkResult err)
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_report(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objectType, uint64_t object, size_t location, int32_t messageCode, const char* pLayerPrefix, const char* pMessage, void* pUserData)
 {
     (void)flags; (void)object; (void)location; (void)messageCode; (void)pUserData; (void)pLayerPrefix; // Unused arguments
-    fprintf(stderr, "[vulkan] Debug report from ObjectType: %i\nMessage: %s\n\n", objectType, pMessage);
+    NIX_DEBUG("[vulkan] Debug report from ObjectType: {}\nMessage: {}\n", objectType, pMessage);
     return VK_FALSE;
 }
 #endif // APP_USE_VULKAN_DEBUG_REPORT
@@ -216,7 +220,7 @@ static void SetupVulkanWindow(ImGui_ImplVulkanH_Window* wd, VkSurfaceKHR surface
     vkGetPhysicalDeviceSurfaceSupportKHR(g_PhysicalDevice, g_QueueFamily, surface, &res);
     if (res != VK_TRUE)
     {
-        fprintf(stderr, "Error no WSI support on physical device 0\n");
+        NIX_ERROR("No WSI support on physical device 0");
         exit(-1);
     }
 
@@ -362,14 +366,14 @@ static bool CreateQNXWindow(QNXWindow* window)
         screen_create_window(&window->Window, window->Context) != 0 ||
         screen_create_event(&window->Event) != 0)
     {
-        fprintf(stderr, "QNX Screen initialization failed: %s\n", strerror(errno));
+        NIX_ERROR("QNX Screen initialization failed: {}", strerror(errno));
         return false;
     }
 
     // A newly created QNX Screen window reports the fullscreen dimensions.
     if (screen_get_window_property_iv(window->Window, SCREEN_PROPERTY_SIZE, window->Size) != 0 || window->Size[0] <= 0 || window->Size[1] <= 0)
     {
-        fprintf(stderr, "Failed to obtain QNX Screen window size: %s\n", strerror(errno));
+        NIX_ERROR("Failed to obtain QNX Screen window size: {}", strerror(errno));
         return false;
     }
 
@@ -379,7 +383,7 @@ static bool CreateQNXWindow(QNXWindow* window)
         screen_set_window_property_iv(window->Window, SCREEN_PROPERTY_SIZE, window->Size) != 0 ||
         screen_set_window_property_iv(window->Window, SCREEN_PROPERTY_TRANSPARENCY, &transparency) != 0)
     {
-        fprintf(stderr, "Failed to configure QNX Screen window: %s\n", strerror(errno));
+        NIX_ERROR("Failed to configure QNX Screen window: {}", strerror(errno));
         return false;
     }
     return true;
@@ -429,17 +433,36 @@ static void QNXSleep(int milliseconds)
     nanosleep(&request, nullptr);
 }
 
-static void RefreshEndpoints(std::vector<nix::EndpointInfo>& endpoints, std::string& status)
+static std::string FormatPayloadHex(std::string_view payload)
+{
+    constexpr char digits[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(payload.size() * 3U);
+    for (std::size_t index = 0; index < payload.size(); ++index)
+    {
+        if (index != 0U)
+            result.push_back(' ');
+        const auto byte = static_cast<unsigned char>(payload[index]);
+        result.push_back(digits[byte >> 4U]);
+        result.push_back(digits[byte & 0x0fU]);
+    }
+    return result;
+}
+
+static void RefreshEndpoints(std::vector<nix::EndpointInfo>& endpoints,
+    std::vector<nix::TopicSample>& samples, const std::string& selectedTopic, std::string& status)
 {
     try
     {
         nix::DaemonClient client("nix-daemon-gui");
         endpoints = client.discover();
+        samples = selectedTopic.empty() ? std::vector<nix::TopicSample>{} : client.sniff(selectedTopic);
         status = "Connected";
     }
     catch (const std::exception& error)
     {
         endpoints.clear();
+        samples.clear();
         status = error.what();
     }
 }
@@ -479,7 +502,7 @@ int main(int, char**)
     const int visible = 1;
     if (screen_set_window_property_iv(window.Window, SCREEN_PROPERTY_VISIBLE, &visible) != 0)
     {
-        fprintf(stderr, "Failed to show QNX Screen window: %s\n", strerror(errno));
+        NIX_ERROR("Failed to show QNX Screen window: {}", strerror(errno));
         return 1;
     }
 
@@ -539,8 +562,13 @@ int main(int, char**)
     //IM_ASSERT(font != nullptr);
 
     std::vector<nix::EndpointInfo> endpoints;
+    std::vector<nix::TopicSample> samples;
+    std::unique_ptr<nix::DaemonClient> sniff_client;
     std::string daemon_status = "Select Refresh to query the daemon.";
+    std::string selected_topic;
+    bool sniffing = false;
     ImVec4 clear_color = ImVec4(0.035f, 0.045f, 0.055f, 1.00f);
+    int selected_sample = 0;
 
     // Main loop
     bool done = false;
@@ -582,40 +610,211 @@ int main(int, char**)
         {
             ImGui::Begin("Nix daemon");
             if (ImGui::Button("Refresh"))
-                RefreshEndpoints(endpoints, daemon_status);
+            {
+                RefreshEndpoints(endpoints, samples, selected_topic, daemon_status);
+                if (selected_sample >= static_cast<int>(samples.size()))
+                    selected_sample = 0;
+            }
             ImGui::SameLine();
             ImGui::Text("%zu endpoint(s)", endpoints.size());
             ImGui::Text("Status: %s", daemon_status.c_str());
 
-            if (endpoints.empty())
+            if (ImGui::BeginTabBar("daemon_views"))
             {
-                ImGui::Separator();
-                ImGui::TextUnformatted("No endpoints to display.");
-            }
-            else if (ImGui::BeginTable("endpoints", 5,
-                         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
-            {
-                ImGui::TableSetupColumn("Role");
-                ImGui::TableSetupColumn("Node");
-                ImGui::TableSetupColumn("Topic");
-                ImGui::TableSetupColumn("Type");
-                ImGui::TableSetupColumn("Capacity");
-                ImGui::TableHeadersRow();
-                for (const nix::EndpointInfo& endpoint : endpoints)
+                if (ImGui::BeginTabItem("Endpoints"))
                 {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(endpoint.role == nix::EndpointRole::Publisher ? "Publisher" : "Subscriber");
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(endpoint.nodeName.c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(endpoint.topicName.c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(endpoint.typeName.c_str());
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%llu", static_cast<unsigned long long>(endpoint.capacity));
+                    if (endpoints.empty())
+                        ImGui::TextUnformatted("No endpoints to display.");
+                    else if (ImGui::BeginTable("endpoints", 5,
+                                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+                    {
+                        ImGui::TableSetupColumn("Role");
+                        ImGui::TableSetupColumn("Node");
+                        ImGui::TableSetupColumn("Topic");
+                        ImGui::TableSetupColumn("Type");
+                        ImGui::TableSetupColumn("Capacity");
+                        ImGui::TableHeadersRow();
+                        for (const nix::EndpointInfo& endpoint : endpoints)
+                        {
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn();
+                            ImGui::TextUnformatted(endpoint.role == nix::EndpointRole::Publisher ? "Publisher" : "Subscriber");
+                            ImGui::TableNextColumn();
+                            ImGui::TextUnformatted(endpoint.nodeName.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::TextUnformatted(endpoint.topicName.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::TextUnformatted(endpoint.typeName.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%llu", static_cast<unsigned long long>(endpoint.capacity));
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
                 }
-                ImGui::EndTable();
+
+                if (ImGui::BeginTabItem("Sniffer"))
+                {
+                    std::vector<std::string> publisherTopics;
+                    for (const nix::EndpointInfo& endpoint : endpoints)
+                    {
+                        if (endpoint.role == nix::EndpointRole::Publisher
+                            && std::find(publisherTopics.begin(), publisherTopics.end(), endpoint.topicName) == publisherTopics.end())
+                            publisherTopics.push_back(endpoint.topicName);
+                    }
+                    if (!selected_topic.empty()
+                        && std::find(publisherTopics.begin(), publisherTopics.end(), selected_topic) == publisherTopics.end()
+                        && !sniffing)
+                        selected_topic.clear();
+
+                    const char* preview = selected_topic.empty() ? "Select topic" : selected_topic.c_str();
+                    ImGui::BeginDisabled(sniffing);
+                    if (ImGui::BeginCombo("Topic", preview))
+                    {
+                        for (const std::string& topic : publisherTopics)
+                        {
+                            const bool isSelected = selected_topic == topic;
+                            if (ImGui::Selectable(topic.c_str(), isSelected))
+                            {
+                                selected_topic = topic;
+                                samples.clear();
+                                selected_sample = 0;
+                            }
+                            if (isSelected)
+                                ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::EndDisabled();
+
+                    ImGui::SameLine();
+                    if (!sniffing)
+                    {
+                        ImGui::BeginDisabled(selected_topic.empty());
+                        if (ImGui::Button("Start"))
+                        {
+                            try
+                            {
+                                auto client = std::make_unique<nix::DaemonClient>("nix-daemon-gui-sniffer");
+                                client->setSniffTopic(selected_topic);
+                                sniff_client = std::move(client);
+                                sniffing = true;
+                                samples.clear();
+                                daemon_status = "Sniffing " + selected_topic;
+                            }
+                            catch (const std::exception& error)
+                            {
+                                daemon_status = error.what();
+                            }
+                        }
+                        ImGui::EndDisabled();
+                    }
+                    else if (ImGui::Button("Stop"))
+                    {
+                        try
+                        {
+                            if (sniff_client)
+                                sniff_client->setSniffTopic({});
+                            sniff_client.reset();
+                            sniffing = false;
+                            daemon_status = "Sniffing stopped";
+                        }
+                        catch (const std::exception& error)
+                        {
+                            daemon_status = error.what();
+                        }
+                    }
+
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(sniffing ? "Capturing" : "Stopped");
+
+                    if (!sniffing && samples.empty())
+                        ImGui::TextUnformatted("Start capture, publish messages, then refresh to inspect the latest sample.");
+                    else if (samples.empty())
+                        ImGui::TextUnformatted("Waiting for a published message.");
+                    else if (ImGui::BeginTable("samples", 4,
+                                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+                    {
+                        ImGui::TableSetupColumn("Topic");
+                        ImGui::TableSetupColumn("Node");
+                        ImGui::TableSetupColumn("Type");
+                        ImGui::TableSetupColumn("Bytes");
+                        ImGui::TableHeadersRow();
+                        for (std::size_t index = 0; index < samples.size(); ++index)
+                        {
+                            const nix::TopicSample& sample = samples[index];
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn();
+                            ImGui::PushID(static_cast<int>(index));
+                            if (ImGui::Selectable(sample.topicName.c_str(), selected_sample == static_cast<int>(index),
+                                    ImGuiSelectableFlags_SpanAllColumns))
+                                selected_sample = static_cast<int>(index);
+                            ImGui::PopID();
+                            ImGui::TableNextColumn();
+                            ImGui::TextUnformatted(sample.nodeName.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::TextUnformatted(sample.typeName.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%llu%s", static_cast<unsigned long long>(sample.originalSize),
+                                sample.originalSize > sample.payload.size() ? " (truncated)" : "");
+                        }
+                        ImGui::EndTable();
+
+                        if (selected_sample >= 0 && selected_sample < static_cast<int>(samples.size()))
+                        {
+                            const nix::TopicSample& sample = samples[static_cast<std::size_t>(selected_sample)];
+                            ImGui::Separator();
+                            ImGui::Text("Payload preview: %zu of %llu bytes", sample.payload.size(),
+                                static_cast<unsigned long long>(sample.originalSize));
+                            const std::string payloadHex = FormatPayloadHex(sample.payload);
+                            ImGui::TextUnformatted("Raw bytes (hex)");
+                            ImGui::BeginChild("payload_bytes", ImVec2(-FLT_MIN, 120.0f), ImGuiChildFlags_Borders);
+                            ImGui::TextWrapped("%s", payloadHex.c_str());
+                            ImGui::EndChild();
+                        }
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Logs"))
+                {
+                    if (ImGui::Button("Clear"))
+                        nix::logging::clearHistory();
+                    ImGui::SameLine();
+                    const std::vector<nix::logging::Entry> logEntries = nix::logging::history();
+                    ImGui::Text("%zu retained", logEntries.size());
+
+                    if (ImGui::BeginTable("log_entries", 5,
+                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY))
+                    {
+                        ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+                        ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+                        ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+                        ImGui::TableSetupColumn("Message");
+                        ImGui::TableSetupColumn("Repeats", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+                        ImGui::TableSetupScrollFreeze(0, 1);
+                        ImGui::TableHeadersRow();
+
+                        for (const nix::logging::Entry& entry : logEntries)
+                        {
+                            ImGui::TableNextRow();
+                            ImGui::TableNextColumn();
+                            ImGui::TextUnformatted(entry.timestamp.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::TextUnformatted(entry.level.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%s:%zu", entry.file.c_str(), entry.line);
+                            ImGui::TableNextColumn();
+                            ImGui::TextWrapped("%s", entry.message.c_str());
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%zu", entry.repetitions);
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
             }
             ImGui::End();
         }
@@ -636,6 +835,16 @@ int main(int, char**)
     }
 
     // Cleanup
+    if (sniff_client)
+    {
+        try
+        {
+            sniff_client->setSniffTopic({});
+        }
+        catch (const std::exception&)
+        {
+        }
+    }
     err = vkDeviceWaitIdle(g_Device);
     check_vk_result(err);
     ImGui_ImplVulkan_Shutdown();

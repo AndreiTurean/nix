@@ -1,11 +1,11 @@
 #include <nix/shared_memory_header.hxx>
+#include <nix/logging.hxx>
 
 #include <cerrno>
 #include <signal.h>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -69,7 +69,7 @@ bool isNixChannel(const struct stat& fileStatus, const nix::SharedMemoryHeader& 
 int main(int argc, char** argv) {
     const bool apply = argc == 2 && std::string_view(argv[1]) == "--apply";
     if (argc > 2 || (argc == 2 && !apply)) {
-        std::cerr << "Usage: nix-cleanup-shm [--apply]\n";
+        NIX_ERROR("Usage: nix-cleanup-shm [--apply]");
         return 2;
     }
 
@@ -98,10 +98,9 @@ int main(int argc, char** argv) {
         const auto& header = *static_cast<const nix::SharedMemoryHeader*>(mapped);
         if (isNixChannel(fileStatus, header) && !processIsAlive(header)) {
             ++staleCount;
-            std::cout << (apply ? "unlinking " : "stale ") << "/" << objectName
-                << " (owner PID " << header.ownerPid << ")\n";
+            NIX_INFO("{} /{} (owner PID {})", apply ? "unlinking" : "stale", objectName, header.ownerPid);
             if (apply && shm_unlink(("/" + objectName).c_str()) == -1 && errno != ENOENT) {
-                std::cerr << "failed to unlink /" << objectName << ": " << errno << '\n';
+                NIX_ERROR("failed to unlink /{}: {}", objectName, errno);
             }
         }
 
@@ -110,9 +109,9 @@ int main(int argc, char** argv) {
     }
 
     if (!apply) {
-        std::cout << staleCount << " stale Nix channel(s) found; pass --apply to unlink them\n";
+        NIX_INFO("{} stale Nix channel(s) found; pass --apply to unlink them", staleCount);
     } else {
-        std::cout << staleCount << " stale Nix channel(s) removed\n";
+        NIX_INFO("{} stale Nix channel(s) removed", staleCount);
     }
     return 0;
 }

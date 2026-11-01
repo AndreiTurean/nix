@@ -1,7 +1,7 @@
 #include <nix/shm_channel.hxx>
+#include <nix/logging.hxx>
 
 #include <cstdint>
-#include <iostream>
 #include <string_view>
 
 struct TelemetryV1 {
@@ -23,16 +23,15 @@ int main() {
     const auto subscriberId = channel.addSubscriber();
     const TelemetryV1 outgoing{1U, 21500};
     if (!channel.push(outgoing)) {
-        std::cerr << "channel is full\n";
+        NIX_ERROR("channel is full");
         return 1;
     }
 
     const auto incoming = channel.pop(subscriberId);
     if (!incoming.has_value()) {
-        std::cerr << "channel is empty\n";
+        NIX_ERROR("channel is empty");
         return 1;
     }
-    std::cout << "sequence=" << incoming->sequence
-        << " temperature_mC=" << incoming->temperatureMilliCelsius << '\n';
+    NIX_INFO("sequence={} temperature_mC={}", incoming->sequence, incoming->temperatureMilliCelsius);
     return 0;
 }
