@@ -1,5 +1,6 @@
 #include <nix/nix.hxx>
 #include <cassert>
+#include <algorithm>
 #include <iostream>
 #include <cstdint>
 #include <stdexcept>
@@ -8,6 +9,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -21,7 +23,12 @@ public:
     explicit DaemonProcess(const char* executablePath, std::string_view suffix = {})
         : _executablePath(executablePath),
           _socketPath("/tmp/nix-daemon-test-" + std::to_string(static_cast<long long>(getpid()))
-              + std::string(suffix) + ".sock"), _process(-1) {
+                            + std::string(suffix) + ".sock"), _process(-1),
+                    _hadPreviousSocketPath(false), _previousSocketPath() {
+                if (const char* previousSocketPath = std::getenv("NIX_DAEMON_SOCKET"); previousSocketPath != nullptr) {
+                        _hadPreviousSocketPath = true;
+                        _previousSocketPath = previousSocketPath;
+                }
         if (setenv("NIX_DAEMON_SOCKET", _socketPath.c_str(), 1) != 0) {
             throw std::runtime_error("failed to configure nix-daemon test socket");
         }
@@ -37,9 +44,19 @@ public:
         }
     }
 
+    void restart() {
+        stop();
+        start();
+    }
+
     ~DaemonProcess() {
         stop();
         unlink(_socketPath.c_str());
+        if (_hadPreviousSocketPath) {
+            setenv("NIX_DAEMON_SOCKET", _previousSocketPath.c_str(), 1);
+        } else {
+            unsetenv("NIX_DAEMON_SOCKET");
+        }
     }
 
     DaemonProcess(const DaemonProcess&) = delete;
@@ -79,7 +96,32 @@ private:
     std::string _executablePath;
     std::string _socketPath;
     pid_t _process;
+    bool _hadPreviousSocketPath;
+    std::string _previousSocketPath;
 };
+
+bool waitForEndpoint(nix::Node& observer, std::string_view topic, const char* nodeName,
+    nix::EndpointRole role, bool expected) {
+    const timespec retryDelay{0, 10000000};
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        const auto endpoints = observer.discover(topic);
+        const bool found = std::any_of(endpoints.begin(), endpoints.end(), [&](const nix::EndpointInfo& endpoint) {
+            return endpoint.nodeName == nodeName && endpoint.role == role;
+        });
+        if (found == expected) {
+            return true;
+        }
+        nanosleep(&retryDelay, nullptr);
+    }
+    return false;
+}
+
+void killProcess(pid_t process) {
+    assert(kill(process, SIGKILL) == 0);
+    int status = 0;
+    assert(waitpid(process, &status, 0) == process);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+}
 
 int main(int argc, char** argv) {
     assert(argc == 2);
@@ -216,6 +258,97 @@ int main(int argc, char** argv) {
         assert(publisher->publish(TestMessage{1, 10}));
         auto received = subscriber->receive();
         assert(received.has_value() && received->sequenceId == 1);
+    }
+
+    {
+        constexpr std::string_view crashedPublisherTopic = "/nix_pub_crash_recovery_topic";
+        constexpr std::uint64_t crashCapacity = 4;
+        shm_unlink(std::string(crashedPublisherTopic).c_str());
+
+        nix::Node observerNode("publisher_crash_observer");
+        const pid_t publisherProcess = fork();
+        assert(publisherProcess != -1);
+        if (publisherProcess == 0) {
+            nix::Node crashedPublisherNode("crashed_publisher");
+            auto crashedPublisher = crashedPublisherNode.createPublisher<TestMessage, crashCapacity>(crashedPublisherTopic);
+            static_cast<void>(crashedPublisher);
+            for (;;) pause();
+        }
+        assert(waitForEndpoint(observerNode, crashedPublisherTopic, "crashed_publisher",
+            nix::EndpointRole::Publisher, true));
+        killProcess(publisherProcess);
+        assert(waitForEndpoint(observerNode, crashedPublisherTopic, "crashed_publisher",
+            nix::EndpointRole::Publisher, false));
+
+        nix::Node replacementPublisherNode("replacement_publisher");
+        nix::Node subscriberNode("publisher_crash_subscriber");
+        auto replacementPublisher = replacementPublisherNode.createPublisher<TestMessage, crashCapacity>(crashedPublisherTopic);
+        auto subscriber = subscriberNode.createSubscriber<TestMessage, crashCapacity>(crashedPublisherTopic);
+        assert(replacementPublisher->publish(TestMessage{7, 70}));
+        const auto received = subscriber->receive();
+        assert(received.has_value() && received->sequenceId == 7);
+    }
+
+    {
+        constexpr std::string_view crashedSubscriberTopic = "/nix_sub_crash_recovery_topic";
+        constexpr std::uint64_t crashCapacity = 4;
+        shm_unlink(std::string(crashedSubscriberTopic).c_str());
+
+        nix::Node publisherNode("subscriber_crash_publisher");
+        nix::Node liveSubscriberNode("live_subscriber");
+        nix::Node observerNode("subscriber_crash_observer");
+        auto publisher = publisherNode.createPublisher<TestMessage, crashCapacity>(crashedSubscriberTopic);
+        auto liveSubscriber = liveSubscriberNode.createSubscriber<TestMessage, crashCapacity>(crashedSubscriberTopic);
+
+        const pid_t subscriberProcess = fork();
+        assert(subscriberProcess != -1);
+        if (subscriberProcess == 0) {
+            nix::Node crashedSubscriberNode("crashed_subscriber");
+            auto crashedSubscriber = crashedSubscriberNode.createSubscriber<TestMessage, crashCapacity>(crashedSubscriberTopic);
+            static_cast<void>(crashedSubscriber);
+            for (;;) pause();
+        }
+        assert(waitForEndpoint(observerNode, crashedSubscriberTopic, "crashed_subscriber",
+            nix::EndpointRole::Subscriber, true));
+        killProcess(subscriberProcess);
+        assert(waitForEndpoint(observerNode, crashedSubscriberTopic, "crashed_subscriber",
+            nix::EndpointRole::Subscriber, false));
+        assert(waitForEndpoint(observerNode, crashedSubscriberTopic, "live_subscriber",
+            nix::EndpointRole::Subscriber, true));
+
+        for (std::uint64_t sequence = 0; sequence < crashCapacity + 2; ++sequence) {
+            assert(publisher->publish(TestMessage{sequence, static_cast<std::int32_t>(sequence)}));
+            const auto received = liveSubscriber->receive();
+            assert(received.has_value() && received->sequenceId == sequence);
+        }
+    }
+
+    {
+        DaemonProcess restartedDaemon(argv[1], "-restart");
+        constexpr std::string_view restartTopic = "/nix_daemon_restart_topic";
+        constexpr std::uint64_t restartCapacity = 4;
+        shm_unlink(std::string(restartTopic).c_str());
+
+        nix::Node publisherNode("restart_existing_publisher");
+        nix::Node subscriberNode("restart_existing_subscriber");
+        auto publisher = publisherNode.createPublisher<TestMessage, restartCapacity>(restartTopic);
+        auto subscriber = subscriberNode.createSubscriber<TestMessage, restartCapacity>(restartTopic);
+
+        restartedDaemon.restart();
+        assert(publisher->publish(TestMessage{11, 110}));
+        const auto received = subscriber->receive();
+        assert(received.has_value() && received->sequenceId == 11);
+
+        nix::Node observerNode("restart_observer");
+        assert(observerNode.discover(restartTopic).empty());
+        nix::Node recoveredNode("restart_recovered_node");
+        auto recoveredSubscriber = recoveredNode.createSubscriber<TestMessage, restartCapacity>(restartTopic);
+        const auto endpoints = observerNode.discover(restartTopic);
+        assert(endpoints.size() == 1);
+        assert(endpoints[0].nodeName == "restart_recovered_node");
+        assert(publisher->publish(TestMessage{12, 120}));
+        const auto recoveredMessage = recoveredSubscriber->receive();
+        assert(recoveredMessage.has_value() && recoveredMessage->sequenceId == 12);
     }
 
     std::cout << "Publisher-Subscriber zero-loss IPC test passed successfully!" << '\n';

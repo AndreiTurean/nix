@@ -1,6 +1,6 @@
 # Nix IPC Middleware
 
-A **C++20** Inter-Process Communication (IPC) library that uses POSIX shared memory (`shm_open`, `mmap`) to exchange data between nodes.
+A **C++20** inter-process communication middleware for **Linux and QNX**, using POSIX shared memory (`shm_open`, `mmap`) to exchange data between nodes. The C++ middleware is designed for native Linux builds and cross-compilation to QNX targets.
 
 ## Architecture & Core Components
 
@@ -28,9 +28,9 @@ Delivery is per-subscriber: each active subscriber has an independent cursor ove
 The `examples/versioned_message.cxx` example demonstrates a custom message and a `nix::SharedTypeFingerprint<T>` specialization. Increment the explicit fingerprint whenever fields are added, removed, reordered, or change meaning or representation; producers and subscribers must use the same schema version.
 
 ### Prerequisites
-- A modern C++20 compiler (GCC/Clang)
+- A modern C++20 compiler (GCC/Clang on Linux; `q++` with QNX SDP)
 - CMake (3.20+)
-- Linux (POSIX shared memory support)
+- Linux with POSIX shared memory support, or QNX SDP 8.0 with `q++` available in the active shell (AArch64, verified)
 
 ### Building & Running Tests
 ```bash
@@ -43,6 +43,17 @@ cmake --build --preset default
 # Run the test suite via CTest
 cd build/default && ctest --output-on-failure
 ```
+
+### QNX Cross-Build
+
+The `qnx-release` preset cross-compiles the C++ middleware and examples from a Linux host for QNX AArch64 using the active QNX SDP environment. It selects the `gcc_ntoaarch64le` toolchain variant and writes artifacts to `build/qnx-release-arm64`. Initialize the SDP environment in your shell first so `q++` and the QNX target libraries are available, then run:
+
+```bash
+cmake --preset qnx-release
+cmake --build --preset qnx-release
+```
+
+This verifies the QNX build; the binaries must run on a compatible QNX target. The Python extension below is currently supported on Linux only.
 
 ### Counter Example
 

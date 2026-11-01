@@ -45,6 +45,14 @@ All subscribers for one topic open the same bounded message buffer, with an inde
 
 The publisher and subscriber must agree on the topic, message type, capacity, and type fingerprint. A subscriber rejects a shared-memory object with incompatible metadata.
 
+## Crash and Restart Recovery
+
+The daemon registry is in-memory. If a node exits without unregistering its endpoints, closing its control socket causes the daemon to remove that node's registrations. A daemon restart clears the registry; existing endpoint mappings continue to exchange payloads because the data path uses shared memory, but their existing `DaemonClient` connections do not reconnect or re-register. Construct new `Node` instances after restart when discovery or new registrations are needed.
+
+If a publisher process crashes, its shared-memory name can remain after the process exits. A replacement publisher can reclaim it when the channel metadata identifies a valid Nix channel whose recorded owner process is no longer alive. If a subscriber crashes, the next channel allocation or publish checks subscriber process identities and releases dead cursors, preventing an abandoned cursor from applying backpressure to live subscribers. A process that is merely disconnected from the daemon but remains alive is not treated as crashed, and its shared-memory endpoint remains active.
+
+Recovery is not durable delivery: messages unread by a crashed subscriber are not guaranteed to be replayed, and messages published while no subscriber remains active are discarded. Applications should recreate nodes after daemon restart and use their own persistence or replay mechanism when message durability is required.
+
 ## Public Types and Scope
 
 | Type | Header | Responsibility and scope |

@@ -162,6 +162,7 @@ public:
 
     SubscriberId addSubscriber() {
         MutexLock lock(_sharedState->mutex, _sharedState->condition);
+        reapDeadSubscribers();
         for (SubscriberId index = 0; index < _sharedState->subscribers.size(); ++index) {
             auto& subscriber = _sharedState->subscribers[index];
             if (!subscriber.active) {
@@ -169,6 +170,8 @@ public:
                     _sharedState->writeIndex = 0;
                 }
                 subscriber.readIndex = _sharedState->writeIndex;
+                subscriber.ownerPid = static_cast<std::uint64_t>(getpid());
+                subscriber.ownerStartTime = processStartTime(getpid());
                 subscriber.active = true;
                 ++_sharedState->subscriberCount;
                 return index;
@@ -291,6 +294,8 @@ private:
     struct SharedState {
         struct SubscriberState {
             std::uint64_t readIndex = 0;
+            std::uint64_t ownerPid = 0;
+            std::uint64_t ownerStartTime = 0;
             bool active = false;
         };
 
@@ -311,6 +316,7 @@ private:
     }
 
     bool pushLocked(const T& item) {
+        reapDeadSubscribers();
         if (_sharedState->subscriberCount == 0) {
             return false;
         }
@@ -326,6 +332,35 @@ private:
             throw std::system_error(signalError, std::generic_category(), "pthread_cond_broadcast failed");
         }
         return true;
+    }
+
+    void reapDeadSubscribers() {
+        for (auto& subscriber : _sharedState->subscribers) {
+            if (!subscriber.active || subscriber.ownerPid == 0
+                || subscriber.ownerPid > static_cast<std::uint64_t>(std::numeric_limits<pid_t>::max())) {
+                continue;
+            }
+            const pid_t ownerPid = static_cast<pid_t>(subscriber.ownerPid);
+            bool ownerIsAlive = true;
+            if (kill(ownerPid, 0) == -1 && errno == ESRCH) {
+                ownerIsAlive = false;
+            } else {
+                const std::uint64_t currentStartTime = processStartTime(ownerPid);
+                if (currentStartTime != 0 && subscriber.ownerStartTime != 0
+                    && currentStartTime != subscriber.ownerStartTime) {
+                    ownerIsAlive = false;
+                }
+            }
+            if (!ownerIsAlive) {
+                subscriber.active = false;
+                subscriber.ownerPid = 0;
+                subscriber.ownerStartTime = 0;
+                --_sharedState->subscriberCount;
+            }
+        }
+        if (_sharedState->subscriberCount == 0) {
+            _sharedState->writeIndex = 0;
+        }
     }
 
     static std::uint64_t processStartTime(pid_t processId) {

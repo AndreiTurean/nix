@@ -8,6 +8,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    add_compile_definitions(_POSIX_C_SOURCE=200809L)
+endif()
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/nix/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/nix/lib")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/nix/lib")
@@ -59,6 +63,9 @@ target_include_directories(nix_core
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(nix_core PUBLIC Threads::Threads)
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    target_link_libraries(nix_core PUBLIC socket)
+endif()
 
 apply_nix_warnings(nix_core)
 
