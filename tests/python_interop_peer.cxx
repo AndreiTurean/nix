@@ -1,9 +1,9 @@
 #include <nix/nix.hxx>
+#include <nix/logging.hxx>
 
 #include <array>
 #include <chrono>
 #include <cstdint>
-#include <iostream>
 #include <string_view>
 #include <thread>
 #include <typeinfo>
@@ -64,7 +64,7 @@ bool receiveExpected(nix::Subscriber<nix::SerializedMessage, capacity>& subscrib
 
 int main(int argc, char** argv) {
     if (argc != 3) {
-        std::cerr << "Usage: python_interop_peer <cpp-publish|cpp-subscribe> <topic>\n";
+        NIX_ERROR("Usage: python_interop_peer <cpp-publish|cpp-subscribe> <topic>");
         return 2;
     }
 
@@ -74,12 +74,12 @@ int main(int argc, char** argv) {
     if (mode == "cpp-publish") {
         auto publisher = node.createPublisher<nix::SerializedMessage, capacity>(topic);
         if (!waitForEndpoint(node, topic, nix::EndpointRole::Subscriber)) {
-            std::cerr << "Python subscriber did not register\n";
+            NIX_ERROR("Python subscriber did not register");
             return 1;
         }
         for (std::int32_t value = 41; value < 44; ++value) {
             if (!publisher->publish(messageFor(value))) {
-                std::cerr << "C++ publish failed\n";
+                NIX_ERROR("C++ publish failed");
                 return 1;
             }
         }
@@ -89,13 +89,13 @@ int main(int argc, char** argv) {
         auto subscriber = node.createSubscriber<nix::SerializedMessage, capacity>(topic);
         for (std::int32_t value = 51; value < 54; ++value) {
             if (!receiveExpected(*subscriber, value)) {
-                std::cerr << "C++ received an unexpected Python message\n";
+                NIX_ERROR("C++ received an unexpected Python message");
                 return 1;
             }
         }
         return 0;
     }
 
-    std::cerr << "Unknown peer mode: " << mode << '\n';
+    NIX_ERROR("Unknown peer mode: {}", mode);
     return 2;
 }

@@ -112,6 +112,7 @@ public:
             _sharedState->header.capacity = Capacity;
             _sharedState->header.elementSize = sizeof(T);
             _sharedState->header.typeFingerprint = SharedTypeFingerprint<T>::value;
+            _sharedState->header.sniffEnabled.store(0U, std::memory_order_relaxed);
             const int initError = initializeSynchronization(*_sharedState);
             if (initError != 0) {
                 std::string unlinkPath = (_name.empty() || _name[0] != '/') ? "/" + _name : _name;
@@ -248,6 +249,10 @@ public:
 
     constexpr std::uint64_t capacity() const {
         return Capacity;
+    }
+
+    bool sniffEnabled() const {
+        return _sharedState->header.sniffEnabled.load(std::memory_order_acquire) != 0U;
     }
 
 private:

@@ -1,4 +1,5 @@
 #include <nix/daemon.hxx>
+#include <nix/logging.hxx>
 
 #include <cstdlib>
 #if defined(__GNUG__)
@@ -6,8 +7,8 @@
 #endif
 #include <exception>
 #include <iomanip>
-#include <iostream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -38,7 +39,7 @@ std::string displayTypeName(const std::string& typeName) {
 
 int main(int argc, char** argv) {
     if (argc > 2) {
-        std::cerr << "Usage: nix-list [TOPIC]\n";
+        NIX_ERROR("Usage: nix-list [TOPIC]");
         return 2;
     }
 
@@ -57,27 +58,31 @@ int main(int argc, char** argv) {
         }
 
         if (topics.empty()) {
-            std::cout << "No active topics found.\n";
+            NIX_INFO("No active topics found.");
             return 0;
         }
 
-        std::cout << std::left << std::setw(32) << "TOPIC"
+        std::ostringstream header;
+        header << std::left << std::setw(32) << "TOPIC"
             << std::right << std::setw(12) << "PUBLISHERS"
-            << std::setw(14) << "SUBSCRIBERS" << "  TYPE\n";
+            << std::setw(14) << "SUBSCRIBERS" << "  TYPE";
+        NIX_INFO("{}", header.str());
         for (const auto& [topic, summary] : topics) {
-            std::cout << std::left << std::setw(32) << topic
+            std::ostringstream row;
+            row << std::left << std::setw(32) << topic
                 << std::right << std::setw(12) << summary.publishers.size()
                 << std::setw(14) << summary.subscribers.size()
-                << "  " << displayTypeName(summary.typeName) << '\n';
+                << "  " << displayTypeName(summary.typeName);
+            NIX_INFO("{}", row.str());
             for (const auto& node : summary.publishers) {
-                std::cout << "  publisher: " << node << '\n';
+                NIX_INFO("  publisher: {}", node);
             }
             for (const auto& node : summary.subscribers) {
-                std::cout << "  subscriber: " << node << '\n';
+                NIX_INFO("  subscriber: {}", node);
             }
         }
     } catch (const std::exception& error) {
-        std::cerr << "nix-list: " << error.what() << '\n';
+        NIX_ERROR("nix-list: {}", error.what());
         return 1;
     }
     return 0;

@@ -132,6 +132,11 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_link_libraries(test_serialized_message PRIVATE nix::core)
     add_test(NAME SerializedMessagePortableFrameTest COMMAND test_serialized_message)
 
+    add_executable(test_logging tests/test_logging.cxx)
+    apply_nix_warnings(test_logging)
+    target_link_libraries(test_logging PRIVATE nix::core)
+    add_test(NAME LoggingFormatTest COMMAND test_logging)
+
     add_executable(test_shm_cleanup tests/test_shm_cleanup.cxx)
     apply_nix_warnings(test_shm_cleanup)
     target_link_libraries(test_shm_cleanup PRIVATE nix::core)

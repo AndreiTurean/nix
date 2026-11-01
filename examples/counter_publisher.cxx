@@ -1,11 +1,11 @@
 #include <nix/nix.hxx>
+#include <nix/logging.hxx>
 #include <nix/serialized_message.hxx>
 
 #include <array>
 #include <bit>
 #include <chrono>
 #include <cstdint>
-#include <iostream>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
             const auto message = nix::makeSerializedMessage(
                 "nix.counter.int32/v1", "application/x-nix-int32-le", payload.data(), payload.size());
             if (publisher->publish(message)) {
-                std::cout << "published: " << counter << '\n';
+                NIX_INFO("published: {}", counter);
                 counter = counter == std::numeric_limits<std::int32_t>::max() ? 0 : counter + 1;
                 ++publishedCount;
                 if (messageLimit >= 0 && publishedCount >= messageLimit) {
@@ -47,8 +47,7 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
     } catch (const std::system_error& error) {
-        std::cerr << "counter publisher startup failed: " << error.what() << '\n'
-            << "Make sure nix-daemon is running and remove a stale topic with nix-cleanup-shm --apply.\n";
+        NIX_ERROR("counter publisher startup failed: {}\nMake sure nix-daemon is running and remove a stale topic with nix-cleanup-shm --apply.", error.what());
         return 1;
     }
 }

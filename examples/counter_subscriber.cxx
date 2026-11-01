@@ -1,10 +1,10 @@
 #include <nix/nix.hxx>
+#include <nix/logging.hxx>
 #include <nix/serialized_message.hxx>
 
 #include <bit>
 #include <chrono>
 #include <cstdint>
-#include <iostream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -27,14 +27,14 @@ int main(int argc, char** argv) {
             }
         }
         if (!publisherAvailable) {
-            std::cout << "waiting for counter publisher..." << '\n';
+            NIX_INFO("waiting for counter publisher...");
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             continue;
         }
 
         try {
             auto subscriber = node.createSubscriber<nix::SerializedMessage, capacity>(topicName);
-            std::cout << "listening on " << topicName << '\n';
+            NIX_INFO("listening on {}", topicName);
             std::int32_t receivedCount = 0;
             for (;;) {
                 const auto message = subscriber->receiveBlocking();
@@ -43,14 +43,14 @@ int main(int argc, char** argv) {
                     if (frame.schema != "nix.counter.int32/v1"
                         || frame.encoding != "application/x-nix-int32-le"
                         || frame.payload.size() != 4U) {
-                        std::cerr << "unsupported serialized counter frame\n";
+                        NIX_ERROR("unsupported serialized counter frame");
                         return 1;
                     }
                     const std::uint32_t bits = static_cast<std::uint32_t>(frame.payload[0])
                         | (static_cast<std::uint32_t>(frame.payload[1]) << 8U)
                         | (static_cast<std::uint32_t>(frame.payload[2]) << 16U)
                         | (static_cast<std::uint32_t>(frame.payload[3]) << 24U);
-                    std::cout << "received: " << std::bit_cast<std::int32_t>(bits) << '\n';
+                    NIX_INFO("received: {}", std::bit_cast<std::int32_t>(bits));
                     ++receivedCount;
                     if (messageLimit >= 0 && receivedCount >= messageLimit) {
                         return 0;
@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
                 }
             }
         } catch (const std::system_error& error) {
-            std::cerr << "publisher disappeared while connecting: " << error.what() << '\n';
+            NIX_ERROR("publisher disappeared while connecting: {}", error.what());
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
     }

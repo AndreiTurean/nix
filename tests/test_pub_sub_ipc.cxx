@@ -1,7 +1,8 @@
 #include <nix/nix.hxx>
+#include <nix/logging.hxx>
 #include <cassert>
 #include <algorithm>
-#include <iostream>
+#include <cstdlib>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -128,6 +129,49 @@ int main(int argc, char** argv) {
     DaemonProcess daemon(argv[1]);
     constexpr std::string_view topicName = "/nix_pub_sub_test_topic";
     constexpr std::uint64_t capacity = 16; // Must be a power of 2
+
+    {
+        constexpr std::string_view sniffTopic = "/nix_topic_sniff_test";
+        constexpr std::uint64_t sniffCapacity = 4;
+        shm_unlink(std::string(sniffTopic).c_str());
+
+        {
+            nix::Node publisherNode("sniff_test_publisher");
+            nix::Node subscriberNode("sniff_test_subscriber");
+            nix::DaemonClient observerClient("sniff_test_observer");
+            auto publisher = publisherNode.createPublisher<TestMessage, sniffCapacity>(sniffTopic);
+            auto subscriber = subscriberNode.createSubscriber<TestMessage, sniffCapacity>(sniffTopic);
+
+            assert(publisher->publish(TestMessage{41, 410}));
+            assert(subscriber->receive().has_value());
+            assert(observerClient.sniff(sniffTopic).empty());
+
+            observerClient.setSniffTopic(sniffTopic);
+            TestMessage message{42, 420};
+
+            assert(publisher->publish(message));
+            const auto received = subscriber->receive();
+            assert(received.has_value());
+            assert(received->sequenceId == message.sequenceId);
+            assert(received->payload == message.payload);
+            const std::string expectedPayload(reinterpret_cast<const char*>(&*received), sizeof(*received));
+
+            const auto samples = observerClient.sniff(sniffTopic);
+            assert(samples.size() == 1);
+            assert(samples[0].nodeName == "sniff_test_publisher");
+            assert(samples[0].topicName == sniffTopic);
+            assert(samples[0].typeName == typeid(TestMessage).name());
+            assert(samples[0].originalSize == sizeof(message));
+            assert(samples[0].payload == expectedPayload);
+
+            observerClient.setSniffTopic({});
+            const TestMessage afterStop{43, 430};
+            assert(publisher->publish(afterStop));
+            const auto stoppedSamples = observerClient.sniff(sniffTopic);
+            assert(stoppedSamples.size() == 1);
+            assert(stoppedSamples[0].payload == expectedPayload);
+        }
+    }
 
     // Ensure a clean slate
     shm_unlink(std::string(topicName).c_str());
@@ -351,6 +395,6 @@ int main(int argc, char** argv) {
         assert(recoveredMessage.has_value() && recoveredMessage->sequenceId == 12);
     }
 
-    std::cout << "Publisher-Subscriber zero-loss IPC test passed successfully!" << '\n';
+    NIX_INFO("Publisher-Subscriber zero-loss IPC test passed successfully!");
     return 0;
 }

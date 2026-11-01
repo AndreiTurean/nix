@@ -1,6 +1,6 @@
 #include <nix/nix.hxx>
+#include <nix/logging.hxx>
 #include <cassert>
-#include <iostream>
 
 std::int32_t main() {
     // Capacity must be a power of 2 according to static_assert
@@ -48,6 +48,6 @@ std::int32_t main() {
     assert(ringBuffer.size() == 0);
     assert(ringBuffer.pop().has_value() == false);
 
-    std::cout << "SpscRingBuffer test passed successfully!" << '\n';
+    NIX_INFO("SpscRingBuffer test passed successfully!");
     return 0;
 }

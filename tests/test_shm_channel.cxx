@@ -1,6 +1,6 @@
 #include <nix/shm_channel.hxx>
+#include <nix/logging.hxx>
 #include <cassert>
-#include <iostream>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -148,6 +148,6 @@ std::int32_t main() {
         assert(channel.empty(subscriberId));
     }
 
-    std::cout << "ShmChannel IPC test passed successfully!" << '\n';
+    NIX_INFO("ShmChannel IPC test passed successfully!");
     return 0;
 }

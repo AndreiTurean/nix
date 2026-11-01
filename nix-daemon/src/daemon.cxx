@@ -1,15 +1,19 @@
 #include <nix/daemon.hxx>
+#include <nix/logging.hxx>
+#include <nix/shared_memory_header.hxx>
 
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
-#include <iostream>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <thread>
@@ -26,15 +30,27 @@ struct Registration {
     std::uint64_t capacity;
 };
 
+struct TopicSample {
+    std::string nodeName;
+    std::string topicName;
+    std::string typeName;
+    std::uint64_t publishedAtMillis;
+    std::uint64_t originalSize;
+    std::string payload;
+};
+
 std::mutex registryMutex;
-std::mutex logMutex;
 std::vector<Registration> registry;
+std::vector<TopicSample> topicSamples;
+std::string sniffTopic;
+std::string sniffOwnerNode;
+constexpr std::size_t maxSniffPayloadBytes = 256U;
+constexpr std::size_t maxTopicSamples = 32U;
 std::atomic<bool> running{true};
 int listeningSocket = -1;
 
 void logEvent(const std::string& message) {
-    std::lock_guard<std::mutex> lock(logMutex);
-    std::cout << "nix-daemon: " << message << '\n';
+    NIX_INFO("{}", message);
 }
 
 void handleSignal(int) {
@@ -140,6 +156,31 @@ bool parseCapacity(std::string_view value, std::uint64_t& capacity) {
     return true;
 }
 
+bool setSharedMemorySniffFlag(std::string_view topicName, bool enabled) {
+    if (topicName.empty()) return false;
+    const std::string shmPath = topicName.front() == '/' ? std::string(topicName) : "/" + std::string(topicName);
+    const int descriptor = shm_open(shmPath.c_str(), O_RDWR, 0);
+    if (descriptor == -1) return false;
+
+    struct stat status{};
+    if (fstat(descriptor, &status) == -1 || status.st_size < static_cast<off_t>(sizeof(nix::SharedMemoryHeader))) {
+        close(descriptor);
+        return false;
+    }
+    void* mapped = mmap(nullptr, sizeof(nix::SharedMemoryHeader), PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
+    close(descriptor);
+    if (mapped == MAP_FAILED) return false;
+
+    auto& header = *static_cast<nix::SharedMemoryHeader*>(mapped);
+    const bool valid = header.magic == nix::sharedMemoryMagic
+        && header.version == nix::sharedMemoryVersion
+        && header.headerSize >= sizeof(nix::SharedMemoryHeader)
+        && header.initializationState.load(std::memory_order_acquire) == nix::sharedMemoryReady;
+    if (valid) header.sniffEnabled.store(enabled ? 1U : 0U, std::memory_order_release);
+    munmap(mapped, sizeof(nix::SharedMemoryHeader));
+    return valid;
+}
+
 void handleClient(int clientSocket) {
     std::string nodeName;
     std::vector<Registration> sessionRegistrations;
@@ -180,6 +221,9 @@ void handleClient(int clientSocket) {
                 {
                     std::lock_guard<std::mutex> lock(registryMutex);
                     registry.push_back(registration);
+                    if (registration.role == nix::EndpointRole::Publisher && registration.topicName == sniffTopic) {
+                        setSharedMemorySniffFlag(sniffTopic, true);
+                    }
                 }
                 sessionRegistrations.push_back(std::move(registration));
                 const Registration& registered = sessionRegistrations.back();
@@ -222,6 +266,11 @@ void handleClient(int clientSocket) {
                     if (registryEntry != registry.end()) {
                         registry.erase(registryEntry);
                     }
+                    if (endpoint.role == nix::EndpointRole::Publisher && endpoint.topicName == sniffTopic) {
+                        setSharedMemorySniffFlag(sniffTopic, false);
+                        sniffTopic.clear();
+                        sniffOwnerNode.clear();
+                    }
                 }
                 sessionRegistrations.erase(sessionEntry);
                 const std::string roleName = endpoint.role == nix::EndpointRole::Publisher ? "publisher" : "subscriber";
@@ -249,16 +298,118 @@ void handleClient(int clientSocket) {
                     if (!sendLine(clientSocket, response)) break;
                 }
                 if (!sendLine(clientSocket, "END")) break;
+            } else if (fields.size() == 5U && fields[0] == "SAMPLE") {
+                std::uint64_t originalSize = 0;
+                if (!parseCapacity(fields[3], originalSize)) {
+                    sendLine(clientSocket, "ERROR\tinvalid sample size");
+                    continue;
+                }
+                const std::string topicName = decode(fields[1]);
+                const std::string typeName = decode(fields[2]);
+                const std::string payload = decode(fields[4]);
+                if (topicName.empty() || typeName.empty() || payload.size() > maxSniffPayloadBytes
+                    || originalSize < payload.size()) {
+                    sendLine(clientSocket, "ERROR\tinvalid sample payload");
+                    continue;
+                }
+                const auto now = std::chrono::system_clock::now().time_since_epoch();
+                const auto publishedAtMillis = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+                bool registeredPublisher = false;
+                {
+                    std::lock_guard<std::mutex> lock(registryMutex);
+                    if (topicName != sniffTopic) {
+                        if (!sendLine(clientSocket, "OK")) break;
+                        continue;
+                    }
+                    registeredPublisher = std::any_of(registry.begin(), registry.end(), [&](const Registration& current) {
+                        return current.nodeName == nodeName && current.topicName == topicName
+                            && current.typeName == typeName && current.role == nix::EndpointRole::Publisher;
+                    });
+                    if (registeredPublisher) {
+                        const auto existing = std::find_if(topicSamples.begin(), topicSamples.end(),
+                            [&](const TopicSample& sample) {
+                                return sample.nodeName == nodeName && sample.topicName == topicName
+                                    && sample.typeName == typeName;
+                            });
+                        if (existing != topicSamples.end()) {
+                            *existing = TopicSample{nodeName, topicName, typeName, publishedAtMillis,
+                                originalSize, payload};
+                        } else {
+                            if (topicSamples.size() == maxTopicSamples) {
+                                topicSamples.erase(topicSamples.begin());
+                            }
+                            topicSamples.push_back(TopicSample{nodeName, topicName, typeName,
+                                publishedAtMillis, originalSize, payload});
+                        }
+                    }
+                }
+                if (!registeredPublisher) {
+                    sendLine(clientSocket, "ERROR\tpublisher endpoint is not registered");
+                    continue;
+                }
+                if (!sendLine(clientSocket, "OK")) break;
+            } else if (fields.size() == 2U && fields[0] == "SNIFF") {
+                const std::string topicFilter = fields[1] == "-" ? std::string{} : decode(fields[1]);
+                std::vector<TopicSample> matches;
+                {
+                    std::lock_guard<std::mutex> lock(registryMutex);
+                    for (const TopicSample& sample : topicSamples) {
+                        if (topicFilter.empty() || sample.topicName == topicFilter) {
+                            matches.push_back(sample);
+                        }
+                    }
+                }
+                for (const TopicSample& sample : matches) {
+                    const std::string response = "SAMPLE_ENTRY\t" + encode(sample.nodeName)
+                        + "\t" + encode(sample.topicName) + "\t" + encode(sample.typeName)
+                        + "\t" + std::to_string(sample.originalSize)
+                        + "\t" + std::to_string(sample.publishedAtMillis)
+                        + "\t" + encode(sample.payload);
+                    if (!sendLine(clientSocket, response)) break;
+                }
+                if (!sendLine(clientSocket, "END")) break;
+            } else if (fields.size() == 2U && fields[0] == "SNIFF_SET") {
+                const std::string requestedTopic = fields[1] == "-" ? std::string{} : decode(fields[1]);
+                std::lock_guard<std::mutex> lock(registryMutex);
+                if (!requestedTopic.empty()) {
+                    const bool publisherExists = std::any_of(registry.begin(), registry.end(),
+                        [&](const Registration& current) {
+                            return current.topicName == requestedTopic && current.role == nix::EndpointRole::Publisher;
+                        });
+                    if (!publisherExists) {
+                        sendLine(clientSocket, "ERROR\tno publisher is registered for the selected topic");
+                        continue;
+                    }
+                    if (!setSharedMemorySniffFlag(requestedTopic, true)) {
+                        sendLine(clientSocket, "ERROR\tunable to arm shared-memory topic");
+                        continue;
+                    }
+                    topicSamples.erase(std::remove_if(topicSamples.begin(), topicSamples.end(),
+                        [&](const TopicSample& sample) { return sample.topicName == requestedTopic; }),
+                        topicSamples.end());
+                }
+                if (!sniffTopic.empty() && sniffTopic != requestedTopic) {
+                    setSharedMemorySniffFlag(sniffTopic, false);
+                }
+                sniffTopic = requestedTopic;
+                sniffOwnerNode = requestedTopic.empty() ? std::string{} : nodeName;
+                if (!sendLine(clientSocket, "OK")) break;
             } else {
                 if (!sendLine(clientSocket, "ERROR\tunknown request")) break;
             }
         }
     } catch (const std::exception& error) {
-        std::cerr << "nix-daemon client error: " << error.what() << '\n';
+        NIX_ERROR("nix-daemon client error: {}", error.what());
     }
 
     {
         std::lock_guard<std::mutex> lock(registryMutex);
+        if (sniffOwnerNode == nodeName && !sniffTopic.empty()) {
+            setSharedMemorySniffFlag(sniffTopic, false);
+            sniffTopic.clear();
+            sniffOwnerNode.clear();
+        }
         for (const auto& registration : sessionRegistrations) {
             const auto found = std::find_if(registry.begin(), registry.end(), [&](const Registration& current) {
                 return current.nodeName == registration.nodeName
@@ -283,11 +434,11 @@ int main(int argc, char** argv) {
     if (argc == 3 && std::string_view(argv[1]) == "--socket") {
         socketPath = argv[2];
     } else if (argc != 1) {
-        std::cerr << "Usage: nix-daemon [--socket PATH]\n";
+        NIX_ERROR("Usage: nix-daemon [--socket PATH]");
         return 2;
     }
     if (socketPath.size() >= sizeof(sockaddr_un::sun_path)) {
-        std::cerr << "nix-daemon socket path is too long\n";
+        NIX_ERROR("nix-daemon socket path is too long");
         return 2;
     }
 
@@ -296,7 +447,7 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, handleSignal);
     listeningSocket = socket(AF_UNIX, SOCK_STREAM, 0);
     if (listeningSocket == -1) {
-        std::cerr << "nix-daemon: socket creation failed\n";
+        NIX_ERROR("socket creation failed");
         return 1;
     }
 
@@ -306,25 +457,25 @@ int main(int argc, char** argv) {
     address.sun_path[socketPath.size()] = '\0';
     unlink(socketPath.c_str());
     if (bind(listeningSocket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == -1) {
-        std::cerr << "nix-daemon: bind failed\n";
+        NIX_ERROR("bind failed");
         close(listeningSocket);
         return 1;
     }
     chmod(socketPath.c_str(), S_IRUSR | S_IWUSR);
     if (listen(listeningSocket, 64) == -1) {
-        std::cerr << "nix-daemon: listen failed\n";
+        NIX_ERROR("listen failed");
         close(listeningSocket);
         unlink(socketPath.c_str());
         return 1;
     }
 
-    logEvent("listening on " + socketPath + " (control plane only; payloads use shared memory)");
+    logEvent("listening on " + socketPath + " (control plane with opt-in topic payload sniffing)");
     while (running.load()) {
         const int clientSocket = accept(listeningSocket, nullptr, nullptr);
         if (clientSocket == -1) {
             if (errno == EINTR) continue;
             if (!running.load()) break;
-            std::cerr << "nix-daemon: accept failed\n";
+            NIX_ERROR("accept failed");
             continue;
         }
         std::thread(handleClient, clientSocket).detach();
