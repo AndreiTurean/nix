@@ -23,9 +23,12 @@ public:
     explicit DaemonProcess(const char* executablePath, std::string_view suffix = {})
         : _executablePath(executablePath),
           _socketPath("/tmp/nix-daemon-test-" + std::to_string(static_cast<long long>(getpid()))
-              + std::string(suffix) + ".sock"), _process(-1),
-          _hadPreviousSocketPath(std::getenv("NIX_DAEMON_SOCKET") != nullptr),
-          _previousSocketPath(_hadPreviousSocketPath ? std::getenv("NIX_DAEMON_SOCKET") : "") {
+                            + std::string(suffix) + ".sock"), _process(-1),
+                    _hadPreviousSocketPath(false), _previousSocketPath() {
+                if (const char* previousSocketPath = std::getenv("NIX_DAEMON_SOCKET"); previousSocketPath != nullptr) {
+                        _hadPreviousSocketPath = true;
+                        _previousSocketPath = previousSocketPath;
+                }
         if (setenv("NIX_DAEMON_SOCKET", _socketPath.c_str(), 1) != 0) {
             throw std::runtime_error("failed to configure nix-daemon test socket");
         }
@@ -97,7 +100,7 @@ private:
     std::string _previousSocketPath;
 };
 
-bool waitForEndpoint(nix::Node& observer, std::string_view topic, std::string_view nodeName,
+bool waitForEndpoint(nix::Node& observer, std::string_view topic, const char* nodeName,
     nix::EndpointRole role, bool expected) {
     const timespec retryDelay{0, 10000000};
     for (int attempt = 0; attempt < 200; ++attempt) {
