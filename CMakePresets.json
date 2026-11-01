@@ -27,6 +27,19 @@
       }
     },
     {
+      "name": "qnx-release",
+      "displayName": "QNX ARM64 Release",
+      "description": "AArch64 release build using the QNX SDP toolchain from the active shell environment",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/${presetName}-arm64",
+      "cacheVariables": {
+        "CMAKE_SYSTEM_NAME": "QNX",
+        "CMAKE_SYSTEM_PROCESSOR": "aarch64",
+        "CMAKE_CXX_COMPILER": "q++",
+        "CMAKE_CXX_COMPILER_ARG1": "-Vgcc_ntoaarch64le"
+      }
+    },
+    {
       "name": "lint",
       "displayName": "Debug with clang-tidy",
       "description": "Debug build that runs clang-tidy on compiled C++ sources",
@@ -44,6 +57,10 @@
     {
       "name": "release",
       "configurePreset": "release"
+    },
+    {
+      "name": "qnx-release",
+      "configurePreset": "qnx-release"
     },
     {
       "name": "lint",
