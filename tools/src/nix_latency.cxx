@@ -20,9 +20,9 @@
 namespace {
 
 constexpr std::size_t minimumPayloadSize = 8U;
-constexpr std::size_t maximumPayloadSize = 8U * 1024U * 1024U;
+constexpr std::size_t maximumPayloadSize = std::size_t{8} * 1024U * 1024U;
 constexpr std::size_t defaultIterations = 100U;
-constexpr std::size_t benchmarkStackSize = 64U * 1024U * 1024U;
+constexpr std::size_t benchmarkStackSize = std::size_t{64} * 1024U * 1024U;
 
 struct Options {
     std::size_t iterations = defaultIterations;
@@ -36,11 +36,16 @@ struct BenchmarkContext {
     std::exception_ptr error;
 };
 
-std::size_t parseNumber(std::string_view value, std::string_view optionName) {
+struct Nodes {
+    nix::Node& publisher;
+    nix::Node& subscriber;
+};
+
+std::size_t parseNumber(std::string_view value) {
     std::size_t result = 0;
     const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result);
     if (error != std::errc{} || end != value.data() + value.size()) {
-        throw std::invalid_argument("invalid value for " + std::string(optionName));
+        throw std::invalid_argument("invalid numeric option value");
     }
     return result;
 }
@@ -64,7 +69,7 @@ Options parseOptions(int argc, char** argv) {
             throw std::invalid_argument("missing value for " + std::string(argument));
         }
 
-        const std::size_t value = parseNumber(argv[++index], argument);
+        const std::size_t value = parseNumber(argv[++index]);
         if (argument == "--iterations") {
             options.iterations = value;
         } else if (argument == "--min-size") {
@@ -90,11 +95,11 @@ Options parseOptions(int argc, char** argv) {
 }
 
 template <std::size_t PayloadSize>
-void measureLatency(const Options& options, nix::Node& publisherNode, nix::Node& subscriberNode) {
+void measureLatency(const Options& options, Nodes& nodes) {
     constexpr std::uint64_t channelCapacity = 2U;
     const std::string topic = "/nix_latency_" + std::to_string(getpid()) + "_" + std::to_string(PayloadSize);
-    auto publisher = publisherNode.createPublisher<std::array<std::uint8_t, PayloadSize>, channelCapacity>(topic);
-    auto subscriber = subscriberNode.createSubscriber<std::array<std::uint8_t, PayloadSize>, channelCapacity>(topic);
+    auto publisher = nodes.publisher.createPublisher<std::array<std::uint8_t, PayloadSize>, channelCapacity>(topic);
+    auto subscriber = nodes.subscriber.createSubscriber<std::array<std::uint8_t, PayloadSize>, channelCapacity>(topic);
     auto payload = std::make_unique<std::array<std::uint8_t, PayloadSize>>();
     payload->fill(static_cast<std::uint8_t>(PayloadSize & 0xffU));
 
@@ -126,12 +131,11 @@ void measureLatency(const Options& options, nix::Node& publisherNode, nix::Node&
 }
 
 template <std::size_t... Exponents>
-void runLatencySweep(const Options& options, nix::Node& publisherNode, nix::Node& subscriberNode,
-    std::index_sequence<Exponents...>) {
+void runLatencySweep(const Options& options, Nodes& nodes, std::index_sequence<Exponents...>) {
     ([&] {
         constexpr std::size_t payloadSize = minimumPayloadSize << Exponents;
         if (payloadSize >= options.minimumSize && payloadSize <= options.maximumSize) {
-            measureLatency<payloadSize>(options, publisherNode, subscriberNode);
+            measureLatency<payloadSize>(options, nodes);
         }
     }(), ...);
 }
@@ -142,9 +146,10 @@ void* runBenchmark(void* rawContext) noexcept {
         const std::string processId = std::to_string(getpid());
         nix::Node publisherNode("nix_latency_publisher_" + processId);
         nix::Node subscriberNode("nix_latency_subscriber_" + processId);
+        Nodes nodes{publisherNode, subscriberNode};
         std::cout << std::fixed << std::setprecision(3)
             << "payload_bytes,iterations,min_round_trip_us,max_round_trip_us,average_round_trip_us\n";
-        runLatencySweep(context.options, publisherNode, subscriberNode, std::make_index_sequence<21>{});
+        runLatencySweep(context.options, nodes, std::make_index_sequence<21>{});
     } catch (...) {
         context.error = std::current_exception();
     }
