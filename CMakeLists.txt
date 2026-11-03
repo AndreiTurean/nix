@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 project(nix VERSION 0.1.0 LANGUAGES CXX)
 
 find_package(Threads REQUIRED)
+include(GNUInstallDirs)
 
 # Enforce modern C++
 set(CMAKE_CXX_STANDARD 20)
@@ -50,126 +51,16 @@ function(apply_nix_warnings target_name)
     )
 endfunction()
 
-add_library(nix_core
-    nix/src/nix.cxx
-    nix/src/daemon_client.cxx
-)
-set_target_properties(nix_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-add_library(nix::core ALIAS nix_core)
-
-target_include_directories(nix_core
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/nix/include>
-        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-)
-target_link_libraries(nix_core PUBLIC Threads::Threads)
-if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
-    target_link_libraries(nix_core PUBLIC socket)
-endif()
-
-apply_nix_warnings(nix_core)
-
-add_executable(nix-daemon nix-daemon/src/daemon.cxx)
-target_link_libraries(nix-daemon PRIVATE nix::core Threads::Threads)
-apply_nix_warnings(nix-daemon)
-
-add_executable(nix-cleanup-shm nix-daemon/src/cleanup_shm.cxx)
-target_link_libraries(nix-cleanup-shm PRIVATE nix::core)
-apply_nix_warnings(nix-cleanup-shm)
-
-if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
-    set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui")
-    add_executable(nix-daemon-gui
-        nix-daemon-gui/main.cxx
-        ${IMGUI_DIR}/imgui.cpp
-        ${IMGUI_DIR}/imgui_draw.cpp
-        ${IMGUI_DIR}/imgui_tables.cpp
-        ${IMGUI_DIR}/imgui_widgets.cpp
-        ${IMGUI_DIR}/backends/imgui_impl_qnx.cpp
-        ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
-    )
-    target_include_directories(nix-daemon-gui PRIVATE
-        ${IMGUI_DIR}
-        ${IMGUI_DIR}/backends
-    )
-    target_compile_definitions(nix-daemon-gui PRIVATE VK_USE_PLATFORM_SCREEN_QNX=1)
-    target_link_libraries(nix-daemon-gui PRIVATE nix::core vulkan screen m)
-endif()
-
-add_executable(counter_publisher examples/counter_publisher.cxx)
-target_link_libraries(counter_publisher PRIVATE nix::core)
-apply_nix_warnings(counter_publisher)
-
-add_executable(counter_subscriber examples/counter_subscriber.cxx)
-target_link_libraries(counter_subscriber PRIVATE nix::core)
-apply_nix_warnings(counter_subscriber)
-
-add_executable(nix-list examples/nix_list.cxx)
-target_link_libraries(nix-list PRIVATE nix::core)
-apply_nix_warnings(nix-list)
-
-add_executable(versioned_message_example examples/versioned_message.cxx)
-target_link_libraries(versioned_message_example PRIVATE nix::core)
-apply_nix_warnings(versioned_message_example)
-
-# Enable testing framework
 enable_testing()
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    # Add the test executable
-    add_executable(test_spsc_ring_buffer tests/test_spsc_ring_buffer.cxx)
-    apply_nix_warnings(test_spsc_ring_buffer)
-    target_link_libraries(test_spsc_ring_buffer PRIVATE nix::core)
-    add_test(NAME SpscRingBufferBasicTest COMMAND test_spsc_ring_buffer)
-
-    add_executable(test_shm_channel tests/test_shm_channel.cxx)
-    apply_nix_warnings(test_shm_channel)
-    target_link_libraries(test_shm_channel PRIVATE nix::core)
-    add_test(NAME ShmChannelTest COMMAND test_shm_channel)
-
-    add_executable(test_serialized_message tests/test_serialized_message.cxx)
-    apply_nix_warnings(test_serialized_message)
-    target_link_libraries(test_serialized_message PRIVATE nix::core)
-    add_test(NAME SerializedMessagePortableFrameTest COMMAND test_serialized_message)
-
-    add_executable(test_logging tests/test_logging.cxx)
-    apply_nix_warnings(test_logging)
-    target_link_libraries(test_logging PRIVATE nix::core)
-    add_test(NAME LoggingFormatTest COMMAND test_logging)
-
-    add_executable(test_shm_cleanup tests/test_shm_cleanup.cxx)
-    apply_nix_warnings(test_shm_cleanup)
-    target_link_libraries(test_shm_cleanup PRIVATE nix::core)
-    add_test(NAME ShmCleanupTest COMMAND test_shm_cleanup $<TARGET_FILE:nix-cleanup-shm>)
-
-    add_executable(test_pub_sub_ipc tests/test_pub_sub_ipc.cxx)
-    apply_nix_warnings(test_pub_sub_ipc)
-    target_link_libraries(test_pub_sub_ipc PRIVATE nix::core)
-    add_test(NAME PublisherSubcriberIpcTest COMMAND test_pub_sub_ipc $<TARGET_FILE:nix-daemon>)
-
-    add_executable(python_interop_peer tests/python_interop_peer.cxx)
-    apply_nix_warnings(python_interop_peer)
-    target_link_libraries(python_interop_peer PRIVATE nix::core)
+add_subdirectory(nix)
+add_subdirectory(nix-daemon)
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    add_subdirectory(nix-daemon-gui)
 endif()
-
-
-### Install step
-include(GNUInstallDirs)
-
-if(TARGET nix-daemon-gui)
-    install(TARGETS nix-daemon-gui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-endif()
-
-install(TARGETS nix_core nix-daemon nix-cleanup-shm counter_publisher counter_subscriber nix-list versioned_message_example
-    EXPORT nixTargets
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
-
-install(DIRECTORY nix/include/
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
+add_subdirectory(examples)
+add_subdirectory(tools)
+add_subdirectory(tests)
 
 install(EXPORT nixTargets
     FILE nixTargets.cmake

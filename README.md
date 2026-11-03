@@ -94,6 +94,15 @@ With `nix-daemon` running, `nix-list` displays active topics, endpoint counts, n
 ./build/default/nix/bin/nix-list /nix_example_counter
 ```
 
+### Measure IPC Latency
+
+With `nix-daemon` running, `nix-latency` measures publish-to-receive round-trip time between two local Nix nodes for payload sizes from 8 bytes through 8 MiB. It prints CSV rows to standard output with the iteration count and minimum, maximum, and average latency for each size. The default is 100 iterations per size. Size bounds must be powers of two in that range.
+
+```bash
+./build/default/nix/bin/nix-latency
+./build/default/nix/bin/nix-latency --iterations 100 --min-size 1024 --max-size 1048576
+```
+
 The compiled schema-fingerprint example can be run with:
 
 ```bash
